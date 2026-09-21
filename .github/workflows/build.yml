@@ -1,0 +1,68 @@
+name: build
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build
+        run: make
+
+      # The app is a bare bundle assembled by the Makefile rather than by Xcode,
+      # so what CI can check is that the assembly worked: both architectures
+      # present, the plist and the icon in place, and the ad-hoc signature valid.
+      - name: Check the bundle
+        run: |
+          test -x build/Reaper.app/Contents/MacOS/Reaper
+          test -f build/Reaper.app/Contents/Info.plist
+          test -f build/Reaper.app/Contents/Resources/Reaper.icns
+          lipo -info build/Reaper.app/Contents/MacOS/Reaper
+          lipo -info build/Reaper.app/Contents/MacOS/Reaper | grep -q arm64
+          lipo -info build/Reaper.app/Contents/MacOS/Reaper | grep -q x86_64
+          codesign -v build/Reaper.app
+
+      # The one path into the app that produces output instead of a menu bar
+      # item. It samples, evaluates and prints, so a runner with no screen still
+      # exercises the whole pipeline end to end.
+      - name: Diagnose
+        run: |
+          ./build/Reaper.app/Contents/MacOS/Reaper --diagnose
+          ./build/Reaper.app/Contents/MacOS/Reaper --diagnose | grep -q 'the mark would be:'
+
+      # Logic and drawing, no windows: the rules and their states, the sustain
+      # clock, what may be killed, and the marks rendered into a bitmap.
+      - name: Test
+        run: make test
+
+      # The project is written in English throughout. BSD grep has no -P, so
+      # this is done in Python rather than with a \p{Hangul} pattern that only
+      # works on the GNU build.
+      - name: Check for untranslated text
+        run: |
+          python3 - <<'PY'
+          import re, subprocess, sys
+          files = subprocess.check_output(
+              ["git", "ls-files"], text=True).split()
+          bad = []
+          for f in files:
+              try:
+                  text = open(f, encoding="utf-8").read()
+              except (UnicodeDecodeError, IsADirectoryError, FileNotFoundError):
+                  continue
+              for i, line in enumerate(text.split("\n"), 1):
+                  # Escaped, not literal: a literal range would make this file
+                  # the first thing the check reports.
+                  if re.search("[\\uac00-\\ud7a3]", line):
+                      bad.append("%s:%d: %s" % (f, i, line.strip()))
+          if bad:
+              print("Untranslated text:")
+              print("\n".join(bad))
+              sys.exit(1)
+          print("%d files checked, all English" % len(files))
+          PY
