@@ -77,20 +77,29 @@ struct WatchRule: Codable, Equatable, Identifiable {
     var minMemoryMB: Double?
     /// Hours since the process started.
     var minAgeHours: Double?
+    /// Kilobytes written to disk per second. Catches what CPU and memory
+    /// cannot see: a log nobody rotates, a sync loop, a process quietly
+    /// filling the disk while costing almost nothing to run.
+    var minWriteKBs: Double?
+    /// Package idle wake-ups per second. The battery condition: a process can
+    /// be cheap on CPU and still never let the package idle.
+    var minWakeups: Double?
     /// States that must all hold. Empty = the rule is about numbers only.
     var states: Set<WatchState> = []
     /// Seconds the conditions must hold continuously. 0 = flag at once.
     var sustain: TimeInterval = 0
 
     init(id: UUID = UUID(), name: String, enabled: Bool = true, minCPU: Double? = nil,
-         minMemoryMB: Double? = nil, minAgeHours: Double? = nil,
-         states: Set<WatchState> = [], sustain: TimeInterval = 0) {
+         minMemoryMB: Double? = nil, minAgeHours: Double? = nil, minWriteKBs: Double? = nil,
+         minWakeups: Double? = nil, states: Set<WatchState> = [], sustain: TimeInterval = 0) {
         self.id = id
         self.name = name
         self.enabled = enabled
         self.minCPU = minCPU
         self.minMemoryMB = minMemoryMB
         self.minAgeHours = minAgeHours
+        self.minWriteKBs = minWriteKBs
+        self.minWakeups = minWakeups
         self.states = states
         self.sustain = sustain
     }
@@ -99,7 +108,8 @@ struct WatchRule: Codable, Equatable, Identifiable {
     /// Codable, and the compiler only writes these keys for a type that leaves
     /// one of them alone.
     private enum CodingKeys: String, CodingKey {
-        case id, name, enabled, minCPU, minMemoryMB, minAgeHours, states, sustain
+        case id, name, enabled, minCPU, minMemoryMB, minAgeHours, minWriteKBs, minWakeups,
+             states, sustain
     }
 
     /// Every key is optional on the way in, so a rules file written by a
@@ -114,6 +124,8 @@ struct WatchRule: Codable, Equatable, Identifiable {
         minCPU = try c.decodeIfPresent(Double.self, forKey: .minCPU)
         minMemoryMB = try c.decodeIfPresent(Double.self, forKey: .minMemoryMB)
         minAgeHours = try c.decodeIfPresent(Double.self, forKey: .minAgeHours)
+        minWriteKBs = try c.decodeIfPresent(Double.self, forKey: .minWriteKBs)
+        minWakeups = try c.decodeIfPresent(Double.self, forKey: .minWakeups)
         let raw = try c.decodeIfPresent([String].self, forKey: .states) ?? []
         states = Set(raw.compactMap(WatchState.init(rawValue:)))
         sustain = try c.decodeIfPresent(TimeInterval.self, forKey: .sustain) ?? 0
@@ -129,13 +141,16 @@ struct WatchRule: Codable, Equatable, Identifiable {
         try c.encodeIfPresent(minCPU, forKey: .minCPU)
         try c.encodeIfPresent(minMemoryMB, forKey: .minMemoryMB)
         try c.encodeIfPresent(minAgeHours, forKey: .minAgeHours)
+        try c.encodeIfPresent(minWriteKBs, forKey: .minWriteKBs)
+        try c.encodeIfPresent(minWakeups, forKey: .minWakeups)
         try c.encode(states.map { $0.rawValue }.sorted(), forKey: .states)
         try c.encode(sustain, forKey: .sustain)
     }
 
     /// A rule with nothing set matches nothing, not everything.
     var isEmpty: Bool {
-        minCPU == nil && minMemoryMB == nil && minAgeHours == nil && states.isEmpty
+        minCPU == nil && minMemoryMB == nil && minAgeHours == nil
+            && minWriteKBs == nil && minWakeups == nil && states.isEmpty
     }
 
     func holds(for p: ProcSample) -> Bool {
@@ -143,6 +158,8 @@ struct WatchRule: Codable, Equatable, Identifiable {
         if let c = minCPU, p.cpu < c { return false }
         if let m = minMemoryMB, Double(p.memory) / 1_048_576 < m { return false }
         if let h = minAgeHours, p.age / 3600 < h { return false }
+        if let w = minWriteKBs, p.writeRate / 1024 < w { return false }
+        if let k = minWakeups, p.wakeupRate < k { return false }
         for s in states {
             switch s {
             case .zombie: if !p.isZombie { return false }
@@ -164,6 +181,8 @@ struct WatchRule: Codable, Equatable, Identifiable {
         if let c = minCPU { bits.append("CPU \u{2265} \(fmtNum(c))%") }
         if let m = minMemoryMB { bits.append("mem \u{2265} \(fmtBytes(UInt64(m * 1_048_576)))") }
         if let h = minAgeHours { bits.append("age \u{2265} \(fmtNum(h)) h") }
+        if let w = minWriteKBs { bits.append("write \u{2265} \(fmtRate(w * 1024))") }
+        if let k = minWakeups { bits.append("wakeups \u{2265} \(fmtNum(k))/s") }
         if bits.isEmpty { return "nothing set" }
         if sustain > 0 { bits.append("for \(fmtAge(sustain))") }
         return bits.joined(separator: " \u{00B7} ")
@@ -317,13 +336,30 @@ struct WatchSettings: Codable, Equatable {
     var inspectApps = false
     /// The window's table opens on everything rather than on what is flagged.
     var showAll = false
+    /// Watching is suspended until this moment. For deliberately running
+    /// something that would trip every rule -- a long build, a big export --
+    /// without turning the rules off and forgetting to turn them back on.
+    var pausedUntil: Date?
+    /// Post a notification the first time a process is flagged. Off by
+    /// default: the mark is the alert, and this is for the times the menu bar
+    /// is not on screen at all.
+    var notify = false
 
     static let pollChoices: [TimeInterval] = [2, 5, 10, 30]
+    /// How long Pause lasts, and what the menu offers.
+    static let pauseChoices: [TimeInterval] = [15 * 60, 60 * 60, 4 * 3600]
+
+    /// Whether watching is suspended right now. A pause that has run out is
+    /// simply over -- nothing has to clear it.
+    func paused(_ now: Date = Date()) -> Bool {
+        guard let until = pausedUntil else { return false }
+        return until > now
+    }
 
     /// Declared rather than synthesised, because `probeHangs` is a key that is
     /// read and never written: it is the old name of `inspectApps`.
     private enum CodingKeys: String, CodingKey {
-        case poll, inspectApps, showAll, probeHangs
+        case poll, inspectApps, showAll, probeHangs, pausedUntil, notify
     }
 
     init() {}
@@ -333,6 +369,8 @@ struct WatchSettings: Codable, Equatable {
         try c.encode(poll, forKey: .poll)
         try c.encode(inspectApps, forKey: .inspectApps)
         try c.encode(showAll, forKey: .showAll)
+        try c.encodeIfPresent(pausedUntil, forKey: .pausedUntil)
+        try c.encode(notify, forKey: .notify)
     }
 
     init(from decoder: Decoder) throws {
@@ -344,10 +382,19 @@ struct WatchSettings: Codable, Equatable {
         inspectApps = try c.decodeIfPresent(Bool.self, forKey: .inspectApps)
             ?? c.decodeIfPresent(Bool.self, forKey: .probeHangs) ?? false
         showAll = try c.decodeIfPresent(Bool.self, forKey: .showAll) ?? false
+        notify = try c.decodeIfPresent(Bool.self, forKey: .notify) ?? false
+        pausedUntil = try c.decodeIfPresent(Date.self, forKey: .pausedUntil)
         // A stored poll from a future version, or a hand-edited zero, would
         // otherwise become a timer that fires continuously.
         if !WatchSettings.pollChoices.contains(poll) {
             poll = min(max(poll, 1), 300)
+        }
+        // A pause from a previous run is honoured, but not one that would
+        // outlast any pause this app offers: a hand-edited date in 2099 would
+        // otherwise switch the watch off for ever and look like a bug.
+        if let until = pausedUntil,
+           until > Date().addingTimeInterval(WatchSettings.pauseChoices.max() ?? 3600) {
+            pausedUntil = nil
         }
     }
 }
@@ -358,9 +405,11 @@ struct WatchSettings: Codable, Equatable {
 /// and nothing else has to parse it. UserDefaults is a parameter with a default
 /// so persistence can be checked against a suite of its own.
 enum Store {
-    static let profilesKey = "profiles"
-    static let activeKey   = "activeProfile"
-    static let settingsKey = "settings"
+    static let profilesKey   = "profiles"
+    static let activeKey     = "activeProfile"
+    static let settingsKey   = "settings"
+    static let exclusionsKey = "exclusions"
+    static let historyKey    = "history"
 
     static func loadProfiles(_ d: UserDefaults = .standard) -> [Profile] {
         guard let data = d.data(forKey: profilesKey),
@@ -401,5 +450,36 @@ enum Store {
 
     static func saveSettings(_ s: WatchSettings, _ d: UserDefaults = .standard) {
         if let data = try? JSONEncoder().encode(s) { d.set(data, forKey: settingsKey) }
+    }
+
+    static func loadExclusions(_ d: UserDefaults = .standard) -> [Exclusion] {
+        guard let data = d.data(forKey: exclusionsKey),
+              let x = try? JSONDecoder().decode([Exclusion].self, from: data) else { return [] }
+        // An entry with no path can never match anything, so it is only clutter.
+        return x.filter { !$0.appPath.isEmpty }
+    }
+
+    static func saveExclusions(_ x: [Exclusion], _ d: UserDefaults = .standard) {
+        if let data = try? JSONEncoder().encode(x) { d.set(data, forKey: exclusionsKey) }
+    }
+
+    /// The history survives a relaunch, which is the point of keeping it: the
+    /// question it answers is about a time you were not watching, and that
+    /// includes times the app was not running.
+    static func loadHistory(_ d: UserDefaults = .standard) -> FlagLog {
+        guard let data = d.data(forKey: historyKey),
+              let e = try? JSONDecoder().decode([FlagEvent].self, from: data) else {
+            return FlagLog()
+        }
+        // Anything still open was open when the app last stopped. It cannot be
+        // known to be open now, so it is closed at the last tick that saw it
+        // rather than left to look current.
+        var log = FlagLog(events: e)
+        log.closeOpen()
+        return log
+    }
+
+    static func saveHistory(_ log: FlagLog, _ d: UserDefaults = .standard) {
+        if let data = try? JSONEncoder().encode(log.events) { d.set(data, forKey: historyKey) }
     }
 }

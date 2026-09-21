@@ -34,6 +34,17 @@ struct ProcSample {
     let cpu: Double
     /// Physical footprint in bytes -- the figure Activity Monitor calls Memory.
     let memory: UInt64
+    /// Bytes written to disk per second over the last interval. Zero on the
+    /// first sample and for a zombie, as with CPU.
+    let writeRate: Double
+    /// Bytes read from disk per second. Reported, not a rule condition: a
+    /// process reading hard is usually doing its job, where one writing hard
+    /// for hours usually is not.
+    let readRate: Double
+    /// Package idle wake-ups per second -- the figure behind Activity Monitor's
+    /// energy impact. A process can be cheap on CPU and still ruin a battery by
+    /// never letting the package idle.
+    let wakeupRate: Double
     /// Seconds since the process started, by the wall clock.
     let age: TimeInterval
     /// Start time in microseconds since the epoch, from the kernel's BSD info.
@@ -54,6 +65,27 @@ struct ProcSample {
     let responsive: Bool?
 
     var started: TimeInterval { Double(startedMicros) / 1e6 }
+
+    /// The app bundle this executable belongs to, or the executable itself.
+    ///
+    /// The unit an exclusion is written against: excluding a browser has to
+    /// exclude the six helpers it will start next, and they all live inside the
+    /// same bundle. Empty for a zombie, which has no path left, so an exclusion
+    /// can never match one by accident.
+    var appPath: String {
+        guard !path.isEmpty else { return "" }
+        if let r = path.range(of: ".app/") { return String(path[..<r.lowerBound]) + ".app" }
+        return path
+    }
+
+    /// What to call the thing an exclusion is written against.
+    var appName: String {
+        let a = appPath
+        guard !a.isEmpty else { return name }
+        return a.hasSuffix(".app")
+            ? ((a as NSString).lastPathComponent as NSString).deletingPathExtension
+            : (a as NSString).lastPathComponent
+    }
 
     /// Adopted by launchd, and not part of macOS.
     ///
@@ -88,7 +120,8 @@ struct ProcSample {
     }
 
     init(pid: pid_t, ppid: pid_t, name: String, path: String, cpu: Double, memory: UInt64,
-         age: TimeInterval, startedMicros: UInt64, isZombie: Bool = false,
+         age: TimeInterval, startedMicros: UInt64, writeRate: Double = 0, readRate: Double = 0,
+         wakeupRate: Double = 0, isZombie: Bool = false,
          isGUIApp: Bool = false, windows: Int? = nil, responsive: Bool? = nil) {
         self.pid = pid
         self.ppid = ppid
@@ -96,6 +129,9 @@ struct ProcSample {
         self.path = path
         self.cpu = cpu
         self.memory = memory
+        self.writeRate = writeRate
+        self.readRate = readRate
+        self.wakeupRate = wakeupRate
         self.age = age
         self.startedMicros = startedMicros
         self.isZombie = isZombie
@@ -209,7 +245,18 @@ func killTarget(_ p: ProcSample, parent: ProcSample?) -> ProcSample? {
 /// anyone else's without root, and the app has none. Those it could not judge
 /// it also could not kill, so nothing usable is lost by not listing them.
 final class ProcTracker {
-    private struct Prev { let started: UInt64; let cpuTime: UInt64; let at: UInt64 }
+    /// `at` is mach absolute, for the CPU ratio, which is in the same units.
+    /// `atWall` is seconds, for the byte and wake-up rates, which are counts
+    /// and need a real interval to divide by.
+    private struct Prev {
+        let started: UInt64
+        let cpuTime: UInt64
+        let at: UInt64
+        let atWall: TimeInterval
+        let written: UInt64
+        let read: UInt64
+        let wakeups: UInt64
+    }
     private var prev: [pid_t: Prev] = [:]
 
     /// When each (process, rule) pair first started holding, keyed so that a
@@ -314,10 +361,25 @@ final class ProcTracker {
             // same process: a pid that has been reused since has a new start.
             let cpuTime = ru.ri_user_time + ru.ri_system_time
             var cpu = 0.0
-            if let p = prev[pid], p.started == started, nowMach > p.at, cpuTime >= p.cpuTime {
-                cpu = Double(cpuTime - p.cpuTime) / Double(nowMach - p.at) * 100
+            var writeRate = 0.0, readRate = 0.0, wakeupRate = 0.0
+            if let p = prev[pid], p.started == started {
+                if nowMach > p.at, cpuTime >= p.cpuTime {
+                    cpu = Double(cpuTime - p.cpuTime) / Double(nowMach - p.at) * 100
+                }
+                // Cumulative counters, so a rate needs the interval. Guarded
+                // against going backwards: the kernel resets these on exec, and
+                // a negative rate would read as a suspiciously quiet process
+                // rather than as nonsense.
+                let dt = nowWall - p.atWall
+                if dt > 0.05 {
+                    writeRate = rate(ru.ri_diskio_byteswritten, p.written, dt)
+                    readRate = rate(ru.ri_diskio_bytesread, p.read, dt)
+                    wakeupRate = rate(ru.ri_pkg_idle_wkups, p.wakeups, dt)
+                }
             }
-            next[pid] = Prev(started: started, cpuTime: cpuTime, at: nowMach)
+            next[pid] = Prev(started: started, cpuTime: cpuTime, at: nowMach, atWall: nowWall,
+                             written: ru.ri_diskio_byteswritten, read: ru.ri_diskio_bytesread,
+                             wakeups: ru.ri_pkg_idle_wkups)
 
             var buf = [CChar](repeating: 0, count: Int(PATH_MAX) * 4)
             let path = proc_pidpath(pid, &buf, UInt32(buf.count)) > 0 ? String(cString: buf) : ""
@@ -325,7 +387,9 @@ final class ProcTracker {
 
             out.append(ProcSample(pid: pid, ppid: pid_t(bsd.pbi_ppid), name: name, path: path,
                                   cpu: cpu, memory: ru.ri_phys_footprint, age: age,
-                                  startedMicros: started, isZombie: false, isGUIApp: isGUI,
+                                  startedMicros: started, writeRate: writeRate,
+                                  readRate: readRate, wakeupRate: wakeupRate,
+                                  isZombie: false, isGUIApp: isGUI,
                                   windows: windows, responsive: responsive))
         }
         prev = next
@@ -357,6 +421,11 @@ final class ProcTracker {
         return ProcSample(pid: pid, ppid: ki.kp_eproc.e_ppid, name: name, path: "",
                           cpu: 0, memory: 0, age: max(0, now - Double(started) / 1e6),
                           startedMicros: started, isZombie: true)
+    }
+
+    /// A per-second rate from two readings of a counter that only goes up.
+    private func rate(_ now: UInt64, _ then: UInt64, _ dt: TimeInterval) -> Double {
+        now >= then ? Double(now - then) / dt : 0
     }
 
     private static func bsdName(_ bsd: inout proc_bsdinfo) -> String {
@@ -430,10 +499,15 @@ final class ProcTracker {
         var holding: [Flag] = []
     }
 
-    func evaluate(_ procs: [ProcSample], rules: [WatchRule], now: Date = Date()) -> Verdict {
+    /// `excluded` holds app paths that are never flagged, whatever the rules
+    /// say. Skipped before the clocks are touched, so an excluded process
+    /// accumulates nothing and un-excluding one starts it from zero.
+    func evaluate(_ procs: [ProcSample], rules: [WatchRule],
+                  excluded: Set<String> = [], now: Date = Date()) -> Verdict {
         var v = Verdict()
         var touched = Set<String>()
         for p in procs {
+            if !excluded.isEmpty, !p.appPath.isEmpty, excluded.contains(p.appPath) { continue }
             var flagged: Flag?
             var holding: Flag?
             for r in rules where r.enabled {

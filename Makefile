@@ -9,8 +9,8 @@ APP = build/Reaper.app
 #
 # Order matters for the two files carrying top-level code: none here does, but
 # main.swift must come last for swiftc to accept it as the entry point.
-SWIFT = app/Core.swift app/Watch.swift app/Rules.swift app/Diagnostics.swift \
-        app/StatusArt.swift app/ProcessWindow.swift app/DetailWindow.swift \
+SWIFT = app/Core.swift app/Watch.swift app/Rules.swift app/History.swift \
+        app/Diagnostics.swift app/StatusArt.swift app/ProcessWindow.swift app/DetailWindow.swift \
         app/AboutWindow.swift app/main.swift
 
 all: $(APP)
@@ -39,8 +39,9 @@ test: build/tests
 # linked into anything else. Linking the windows too means the suite compiles
 # them, even though it never opens one.
 TEST_SRC = tests/Tests.swift tests/RuleTests.swift tests/WatchTests.swift \
-           tests/ViewTests.swift \
-           app/Core.swift app/Watch.swift app/Rules.swift app/Diagnostics.swift \
+           tests/ViewTests.swift tests/HistoryTests.swift \
+           app/Core.swift app/Watch.swift app/Rules.swift app/History.swift \
+           app/Diagnostics.swift \
            app/StatusArt.swift app/ProcessWindow.swift app/DetailWindow.swift \
            app/AboutWindow.swift
 

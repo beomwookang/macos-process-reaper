@@ -15,13 +15,15 @@ import AppKit
 /// nothing known about its windows or whether it is answering -- which is what
 /// every process looks like until the app is granted Accessibility.
 func testProc(pid: pid_t, ppid: pid_t = 100, cpu: Double = 0, memMB: Double = 100,
-              ageH: Double = 1, path: String = "/Applications/X.app/Contents/MacOS/X",
+              ageH: Double = 1, writeKBs: Double = 0, wakeups: Double = 0,
+              path: String = "/Applications/X.app/Contents/MacOS/X",
               started: UInt64 = 1, zombie: Bool = false, gui: Bool = false,
               windows: Int? = nil, responsive: Bool? = nil) -> ProcSample {
     ProcSample(pid: pid, ppid: ppid,
                name: path.isEmpty ? "x" : (path as NSString).lastPathComponent,
                path: path, cpu: cpu, memory: UInt64(memMB * 1_048_576),
-               age: ageH * 3600, startedMicros: started, isZombie: zombie,
+               age: ageH * 3600, startedMicros: started, writeRate: writeKBs * 1024,
+               readRate: 0, wakeupRate: wakeups, isZombie: zombie,
                isGUIApp: gui, windows: windows, responsive: responsive)
 }
 
@@ -59,6 +61,8 @@ enum Tests {
         ViewTests.run(check)
         print("diagnostics")
         DiagnosticsTests.run(check)
+        print("history")
+        HistoryTests.run(check)
 
         UserDefaults().removePersistentDomain(forName: "com.local.reaper.tests")
         print("\(ran) checks, \(failed) failed")

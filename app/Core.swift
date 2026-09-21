@@ -127,6 +127,19 @@ func fmtAge(_ s: TimeInterval) -> String {
 
 func fmtCPU(_ c: Double) -> String { String(format: "%.0f%%", c) }
 
+/// Bytes per second, at the scale the number happens to be. A process writing
+/// 400 bytes a second and one writing 40 megabytes are both worth naming, and
+/// "419430400 B/s" names neither well.
+func fmtRate(_ bytesPerSec: Double) -> String {
+    if bytesPerSec < 1024 { return String(format: "%.0f B/s", bytesPerSec) }
+    let kb = bytesPerSec / 1024
+    if kb < 1024 { return String(format: "%.0f KB/s", kb) }
+    return String(format: "%.1f MB/s", kb / 1024)
+}
+
+/// Wake-ups per second.
+func fmtWakeups(_ perSec: Double) -> String { String(format: "%.0f/s", perSec) }
+
 /// A wall-clock instant, for the one place that shows when a process started
 /// rather than how long ago that was.
 func fmtWhen(_ epoch: TimeInterval) -> String {
