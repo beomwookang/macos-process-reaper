@@ -237,6 +237,14 @@ enum RuleTests {
         check(needy.count == 1 && needy.first?.name == "Aggressive",
               "only the Aggressive profile needs Accessibility", "\(needy.map { $0.name })")
 
+        // The no-window state reads wrong on common apps -- measured, four of
+        // seven, Slack and Chrome among them -- so nothing ships using it. This
+        // is the check that keeps it out.
+        let windowRules = builtInProfiles.flatMap { $0.rules }
+            .filter { $0.states.contains(.windowless) }
+        check(windowRules.isEmpty,
+              "no shipped profile uses the no-window state", "\(windowRules.map { $0.name })")
+
         // Restoring: an edited shipped profile goes back, a deleted one comes
         // back, a user's own is left alone.
         var edited = builtInProfiles[0]

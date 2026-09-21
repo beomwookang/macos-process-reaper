@@ -9,7 +9,7 @@
 [![Apple Silicon](https://img.shields.io/badge/Apple%20Silicon-native-black)](#requirements)
 [![Language](https://img.shields.io/badge/Swift-AppKit%20only-orange)](app/)
 [![Privileges](https://img.shields.io/badge/privileges-none-brightgreen)](#permissions)
-[![Checks](https://img.shields.io/badge/checks-268-blue)](tests/)
+[![Checks](https://img.shields.io/badge/checks-273-blue)](tests/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 > A Mac that is hot, or slow, or out of memory usually has one process behind it,
@@ -192,7 +192,7 @@ Double-clicking a live row opens everything the row had no space for:
 |---|---|
 | **Quiet** | Only what is unmistakable: 500% for ten minutes, or 8 GB for five |
 | **Balanced** | Runaways, memory hogs, long-running busy processes, and orphans burning a core. Needs no permissions |
-| **Aggressive** | The same, sooner, plus zombies and the two states that need Accessibility |
+| **Aggressive** | The same, sooner, plus zombies and apps that have stopped answering. Only the last needs Accessibility |
 
 **Restore Profiles** puts each shipped profile back as shipped — replacing one
 you edited, re-adding one you deleted — and leaves profiles of your own alone.
@@ -260,11 +260,19 @@ a shell keeps its tty, where an agent never had one. It is not, because the tty
 is revoked when the terminal goes, so it reads as `NODEV` for exactly the
 processes it was meant to find. Measured: zero of the 438.
 
-### no window
+### no window — measured unreliable, and in no shipped profile
 
-An app meant to have a window, with none on screen. This is the shape of a
-viewer still redrawing for a window closed hours ago, and it is the state that
-needs Accessibility.
+An app meant to have a window, with none on screen: the shape of a viewer still
+redrawing for a window closed hours ago. It is also the one condition here that
+does not work well enough to switch on for anybody.
+
+Measured with the permission granted: **four of seven running apps read as
+having no windows, Slack and Chrome among them**, both of which plainly had
+several. The accessibility window list is accurate for some apps and empty for
+others — including, awkwardly, the browsers and Electron apps most likely to be
+the thing you are looking for. No shipped profile uses it, and a check in the
+suite keeps it that way. The state stays selectable for anyone who has looked at
+the window counts in a detail window and found them right on their own machine.
 
 `CGWindowListCopyWindowInfo` needs no permission at all and cannot answer the
 question, either way round. Asked for on-screen windows only, it reports nothing
@@ -276,7 +284,7 @@ used to have, unchanged, indefinitely. One would flag apps that are fine; the
 other would never flag anything. The accessibility window list tracks what an app
 actually has, so it is the only source worth using.
 
-### not responding
+### not responding — verified
 
 Its main thread is not draining its event queue. This is the state the spinning
 cursor is showing you, and it is read by asking the app for its windows with a
@@ -293,8 +301,9 @@ rest.
 Balanced profiles use only these, so they work on a machine that has granted
 nothing at all.
 
-**Accessibility** is needed for `no window` and `not responding`, for the reasons
-above. It is off until you turn on **Inspect Apps for Windows & Hangs** in the
+**Accessibility** is needed for `not responding`, and for `no window`, which no
+profile uses. Verified with it granted: an app suspended with `kill -STOP` is
+flagged after the rule's minute, and the flag lands in the history. It is off until you turn on **Inspect Apps for Windows & Hangs** in the
 menu, and macOS will ask when you do. Until then, rules using those two states
 say they are inactive rather than flagging nothing in silence.
 
@@ -374,7 +383,7 @@ ceiling each.
 
 ```sh
 make            # build/Reaper.app, universal, ad-hoc signed
-make test       # ./build/tests -- logic and drawing, no windows, 268 checks
+make test       # ./build/tests -- logic and drawing, no windows, 273 checks
 make app        # the bundle only
 make mark-states # redraws assets/mark-states.png from the app's own statusMark
 make install    # copy to /Applications

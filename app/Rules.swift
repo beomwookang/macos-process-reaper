@@ -56,8 +56,12 @@ enum WatchState: String, Codable, CaseIterable {
                  + "behind by a shell that has since closed. On macOS launchd also starts agents "
                  + "and apps directly, so this only means something alongside a threshold."
         case .windowless:
-            return "An app meant to have a window, with none on screen. A viewer still "
-                 + "redrawing for a window closed hours ago looks like this."
+            return "An app meant to have a window, with none on screen -- a viewer still "
+                 + "redrawing for a window closed hours ago looks like this. Measured wrong "
+                 + "too often to ship: on one machine four of seven apps read as having no "
+                 + "windows, Slack and Chrome among them, both of which plainly had several. "
+                 + "No profile uses it. Switch it on only after checking, in a detail window, "
+                 + "that the window counts for your own apps are right."
         case .unresponsive:
             return "Its main thread is not draining its event queue, so it did not answer "
                  + "in time. This is the state the spinning cursor is showing you."
@@ -289,9 +293,6 @@ let builtInProfiles: [Profile] = [
                           name: "Busy for hours", minCPU: 30, minAgeHours: 6, sustain: 300),
                 WatchRule(id: uuid("B0000000-0000-4000-8000-000000000303"),
                           name: "Memory hog", minMemoryMB: 2048, sustain: 30),
-                WatchRule(id: uuid("B0000000-0000-4000-8000-000000000304"),
-                          name: "Forgotten window", minCPU: 10, minAgeHours: 0.5,
-                          states: [.windowless], sustain: 300),
                 WatchRule(id: uuid("B0000000-0000-4000-8000-000000000305"),
                           name: "Orphan", minCPU: 50, minAgeHours: 0.5,
                           states: [.orphan], sustain: 120),

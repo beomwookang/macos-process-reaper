@@ -90,6 +90,22 @@ func diagnosticsText(_ d: UserDefaults = .standard, settle: TimeInterval = 2,
     field("orphans:", "\(procs.filter { $0.isOrphan }.count)")
     line()
 
+    // What the accessibility API says about each app, per app. The two states
+    // that depend on it are the only ones whose source cannot be checked from
+    // outside the app, so a report has to carry the raw answers: "four of seven
+    // apps read as having no windows" is a diagnosis, where "the no-window rule
+    // flagged four things" is only a symptom.
+    if cap.appsInspected {
+        let apps = procs.filter { $0.isGUIApp }.sorted { $0.name < $1.name }
+        line("apps, as the accessibility API describes them:")
+        for p in apps {
+            let w = p.windows.map { "\($0) window\($0 == 1 ? "" : "s")" } ?? "windows unknown"
+            let r = p.responsive.map { $0 ? "answering" : "NOT ANSWERING" } ?? "not asked"
+            line("  \(p.name.padding(toLength: 30, withPad: " ", startingAt: 0)) \(w)   \(r)")
+        }
+        line()
+    }
+
     line("rules of \(active?.name ?? "?"):")
     for r in active?.rules ?? [] {
         let why = r.inactiveReason(cap)
