@@ -10,10 +10,16 @@
 //
 //   make mark-states
 //
-// No menu-bar strip behind the marks. An earlier version drew one, meaning to
-// show that the calm mark is a template the system tints with the bar's own
-// ink, and it read as a grey box sitting behind the icon for no reason: the
-// chip overflowed it top and bottom and it carried no information of its own.
+// Transparent, with no panel behind the marks. Two earlier versions had one --
+// first a strip of menu bar behind each chip, then a flat dark field behind all
+// of them -- and both read, on a white README page, as an odd rectangle sitting
+// in the middle of the document. What the image has to show is four glyphs and
+// which is which; a background only competes with the page it lands on.
+//
+// Which means the template marks cannot be tinted the near-white a dark menu
+// bar would use, because the page underneath may be white. They are drawn in a
+// mid grey that holds up against both, and paused stays visibly fainter because
+// the faintness is alpha rather than a lighter colour.
 //
 // The marks are drawn straight onto the canvas at the enlarged size, so the
 // bezier paths are stroked at that size and the edges stay clean. Rasterising
@@ -42,7 +48,9 @@ enum MarkStates {
         let tint = NSImage(size: img.size)
         tint.lockFocus()
         img.draw(in: NSRect(origin: .zero, size: img.size))
-        NSColor(calibratedWhite: 0.95, alpha: 1).set()
+        // Mid grey, not the near-white a dark menu bar draws with: this image
+        // sits on a page that may be either colour.
+        NSColor(calibratedWhite: 0.45, alpha: 1).set()
         // Inside its own image, which starts transparent: sourceAtop against a
         // context that already has a background paints the background too.
         NSRect(origin: .zero, size: img.size).fill(using: .sourceAtop)
@@ -77,9 +85,13 @@ enum MarkStates {
         NSGraphicsContext.saveGraphicsState()
         NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: canvas)
 
-        // One flat field, in the grey a dark menu bar actually sits at.
-        NSColor(calibratedRed: 0.13, green: 0.135, blue: 0.145, alpha: 1).setFill()
+        // Cleared to transparent, explicitly: the bitmap is allocated
+        // uninitialised, and whatever happens to be in that memory is what
+        // shows through otherwise.
+        NSGraphicsContext.current?.compositingOperation = .copy
+        NSColor.clear.setFill()
         NSBezierPath(rect: NSRect(x: 0, y: 0, width: W, height: H)).fill()
+        NSGraphicsContext.current?.compositingOperation = .sourceOver
 
         for (i, pair) in states.enumerated() {
             let img = marks[i]
@@ -90,7 +102,8 @@ enum MarkStates {
             let label = pair.1 as NSString
             let attrs: [NSAttributedString.Key: Any] = [
                 .font: NSFont.monospacedSystemFont(ofSize: 15, weight: .regular),
-                .foregroundColor: NSColor(calibratedWhite: 0.58, alpha: 1),
+                // Readable on a white page and on a dark one.
+                .foregroundColor: NSColor(calibratedWhite: 0.45, alpha: 1),
             ]
             let sz = label.size(withAttributes: attrs)
             label.draw(at: NSPoint(x: cellW * CGFloat(i) + (cellW - sz.width) / 2,
