@@ -112,7 +112,7 @@ to ask you.
 | Red, with a count | That many processes are flagged |
 | The same outline, faint | Paused. Watching is suspended, and the mark says so rather than looking calm |
 
-![The three states of the menu bar mark: a plain outlined chip, an amber chip, and a red chip with the number three beside it](assets/mark-states.png)
+![The four states of the menu bar mark: a plain outlined chip, an amber chip, a red chip with the number three beside it, and the same outline drawn faint for paused](assets/mark-states.png)
 
 The chip fills from the bottom with how busy the machine is. That is not
 decoration: eight flagged processes on an idle machine and eight on a saturated
@@ -356,6 +356,7 @@ ceiling each.
 make            # build/Reaper.app, universal, ad-hoc signed
 make test       # ./build/tests -- logic and drawing, no windows, 261 checks
 make app        # the bundle only
+make mark-states # redraws assets/mark-states.png from the app's own statusMark
 make install    # copy to /Applications
 make uninstall  # remove the app and the login item
 make clean

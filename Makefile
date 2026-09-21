@@ -63,7 +63,15 @@ uninstall:
 	@echo "removed the app and the login item. Settings stay in defaults;"
 	@echo "run: defaults delete com.local.reaper"
 
+# The one thing that writes assets/mark-states.png, drawn by the app's own
+# statusMark so the picture cannot say something the code does not.
+mark-states: tools/mark-states.swift app/StatusArt.swift app/Core.swift app/Watch.swift app/Rules.swift app/History.swift
+	@mkdir -p build
+	swiftc -o build/mark-states tools/mark-states.swift \
+	    app/Core.swift app/Watch.swift app/Rules.swift app/History.swift app/StatusArt.swift
+	./build/mark-states assets
+
 clean:
 	rm -rf build
 
-.PHONY: all app test install uninstall clean
+.PHONY: all app test install uninstall clean mark-states
