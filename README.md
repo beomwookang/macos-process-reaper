@@ -9,7 +9,7 @@
 [![Apple Silicon](https://img.shields.io/badge/Apple%20Silicon-native-black)](#requirements)
 [![Language](https://img.shields.io/badge/Swift-AppKit%20only-orange)](app/)
 [![Privileges](https://img.shields.io/badge/privileges-none-brightgreen)](#permissions)
-[![Checks](https://img.shields.io/badge/checks-261-blue)](tests/)
+[![Checks](https://img.shields.io/badge/checks-268-blue)](tests/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 > A Mac that is hot, or slow, or out of memory usually has one process behind it,
@@ -304,8 +304,12 @@ Two things to know about it:
   may drop the permission**. Re-grant it after `make`, or leave the switch off.
 - The window count from the accessibility list has not been verified end to end
   in this repo, because doing so needs the grant, which needs a person in System
-  Settings. The path with the permission denied *is* covered: it reports why
-  rather than guessing, and the suite checks that.
+  Settings. What *is* covered: the permission-denied path reports why rather
+  than guessing, and the parse of whatever the API hands back returns *unknown*
+  for anything that is not a window list rather than zero — which matters,
+  because zero windows matches the rule and unknown never can. A fallback of
+  zero there would have read every app as windowless the moment that cast
+  failed.
 
 **Other people's processes** are never listed. macOS refuses their readings
 without root and refuses the signal too, so a process this app could not judge
@@ -354,7 +358,7 @@ ceiling each.
 
 ```sh
 make            # build/Reaper.app, universal, ad-hoc signed
-make test       # ./build/tests -- logic and drawing, no windows, 261 checks
+make test       # ./build/tests -- logic and drawing, no windows, 268 checks
 make app        # the bundle only
 make mark-states # redraws assets/mark-states.png from the app's own statusMark
 make install    # copy to /Applications

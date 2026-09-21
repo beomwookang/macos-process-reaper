@@ -34,6 +34,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// probe runs, which is the other reason it is not the main one.
     private let tracker = ProcTracker()
     private let sampleQueue = DispatchQueue(label: "com.local.reaper.sample", qos: .utility)
+    /// A sample is in flight. The queue is serial, so enqueueing regardless
+    /// would build a backlog that never drains: with the accessibility probe on
+    /// and a few apps not answering, one sample can outlast the poll interval,
+    /// and refresh() is also called on menu open and twice after every signal.
+    private var sampling = false
+    /// A refresh was asked for while one was in flight. Honoured once, when it
+    /// finishes -- so the last request is never simply dropped, and N requests
+    /// still cost one extra sample rather than N.
+    private var resampleWanted = false
 
     private var load: SystemLoad?
     private var procs: [ProcSample] = []
@@ -267,6 +276,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // MARK: - the tick
 
     private func refresh() {
+        guard !sampling else {
+            resampleWanted = true
+            return
+        }
+        sampling = true
         // NSWorkspace is a main-thread API, so the app list is gathered here and
         // handed over. Everything else -- the proc tables, and the accessibility
         // probe that deliberately waits on apps that are not answering -- runs
@@ -299,6 +313,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         self.procs = procs
         self.verdict = verdict
         self.capability = cap
+
+        sampling = false
+        defer {
+            if resampleWanted {
+                resampleWanted = false
+                refresh()
+            }
+        }
 
         let alive = Set(procs.map { $0.pid })
         termSent = termSent.filter { alive.contains($0.key) }

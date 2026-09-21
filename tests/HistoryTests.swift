@@ -11,6 +11,7 @@ import Foundation
 enum HistoryTests {
     static func run(_ check: (Bool, String, String) -> Void) {
         newThresholds(check)
+        windowCounts(check)
         exclusions(check)
         log(check)
         storage(check)
@@ -59,6 +60,32 @@ enum HistoryTests {
         // Neither needs a permission, so they are usable in every profile.
         check(!noisy.needsInspection && !awake.needsInspection,
               "the two rates need nothing granted", "")
+    }
+
+    // MARK: - the accessibility window count
+
+    /// The one parse in the app that has never run on a machine which granted
+    /// the permission, so its fallbacks are checked here instead.
+    private static func windowCounts(_ check: (Bool, String, String) -> Void) {
+        check(windowCount(from: nil) == nil,
+              "no value from the accessibility API is unknown, not zero", "")
+        check(windowCount(from: "not a window list" as CFTypeRef) == nil,
+              "something that is not a list is unknown, not zero", "")
+        check(windowCount(from: 7 as CFTypeRef) == nil,
+              "a number is unknown, not zero", "")
+        // An app that answers with an empty list has told you something: none.
+        check(windowCount(from: [] as CFArray) == 0,
+              "an empty list is zero windows, which a rule may match on", "")
+        check(windowCount(from: ["a", "b", "c"] as CFArray) == 3,
+              "a list of three is three, whatever the bridge makes of the elements",
+              "\(windowCount(from: ["a", "b", "c"] as CFArray) ?? -1)")
+
+        // And the difference those two answers make to a rule.
+        let rule = WatchRule(name: "w", states: [.windowless])
+        check(rule.holds(for: testProc(pid: 1, gui: true, windows: 0)),
+              "zero windows matches a no-window rule", "")
+        check(!rule.holds(for: testProc(pid: 1, gui: true, windows: nil)),
+              "unknown does not, which is why the fallback is nil", "")
     }
 
     // MARK: - exclusions

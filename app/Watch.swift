@@ -672,9 +672,7 @@ func probeApp(_ pid: pid_t, timeout: Float = 0.25) -> (responsive: Bool, windows
     let rc = AXUIElementCopyAttributeValue(el, kAXWindowsAttribute as CFString, &value)
     switch rc {
     case .success:
-        // Minimised windows and windows on other Spaces are in this list, and
-        // should be: the app has something to come back to either way.
-        return (true, (value as? [AXUIElement])?.count ?? 0)
+        return (true, windowCount(from: value))
     case .cannotComplete:
         return (false, nil)
     default:
@@ -683,6 +681,28 @@ func probeApp(_ pid: pid_t, timeout: Float = 0.25) -> (responsive: Bool, windows
         // attribute is not one to flag for lacking it.
         return (true, nil)
     }
+}
+
+/// How many windows the accessibility API just said an app has.
+///
+/// nil when the answer is not a window list. That distinction is the whole
+/// point: nil means "no answer I understand" and can never match a rule, where
+/// 0 means "it told me, and the answer is none" and can. Falling back to 0
+/// instead would have read every app as windowless the moment this cast failed,
+/// and turned the one rule that uses it into a rule that flags everything.
+///
+/// Minimised windows and windows on other Spaces are in the list, and should
+/// be: the app has something to come back to either way.
+func windowCount(from value: CFTypeRef?) -> Int? {
+    guard let value else { return nil }
+    if let windows = value as? [AXUIElement] { return windows.count }
+    // The bridge to [AXUIElement] is the part that has never run on a machine
+    // that granted the permission, so the raw CFArray is tried as well rather
+    // than trusting one cast.
+    if CFGetTypeID(value) == CFArrayGetTypeID() {
+        return CFArrayGetCount((value as! CFArray))
+    }
+    return nil
 }
 
 /// System-wide GPU utilisation from the accelerator driver's own statistics.
