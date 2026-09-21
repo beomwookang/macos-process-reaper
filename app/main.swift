@@ -47,6 +47,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // MARK: windows
 
     private var processes: ProcessWindow?
+    private var about: AboutWindow?
     /// One detail window per process, keyed by pid: opening the same row twice
     /// should raise the window that is already there.
     private var details: [pid_t: DetailWindow] = [:]
@@ -133,6 +134,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         m.addItem(.separator())
         loginItem.target = self
         m.addItem(loginItem)
+
+        m.addItem(.separator())
+        let about = NSMenuItem(title: "About \(APP_NAME)", action: #selector(openAbout),
+                               keyEquivalent: "")
+        about.target = self
+        m.addItem(about)
 
         m.addItem(.separator())
         let quit = NSMenuItem(title: "Quit Reaper", action: #selector(quit), keyEquivalent: "q")
@@ -462,6 +469,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                           capability: capability, termSent: termSent)
     }
 
+    @objc private func openAbout() {
+        if about == nil || about?.window == nil { about = AboutWindow() }
+        NSApp.activate(ignoringOtherApps: true)
+        about?.showWindow(nil)
+        about?.window?.makeKeyAndOrderFront(nil)
+    }
+
     private func openDetail(_ p: ProcSample) {
         let w: DetailWindow
         if let existing = details[p.pid], existing.window != nil {
@@ -497,73 +511,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 }
 
-// MARK: - diagnosis
-
-/// `Reaper --diagnose` prints what the app sees and exits, without putting
-/// anything in the menu bar.
-///
-/// The mark has three states and no text in two of them, which makes "why is it
-/// amber" a question a screenshot cannot answer. This prints the answer: which
-/// profile is loaded, what the sampler found, and what each rule made of it.
-func diagnose() {
-    let profiles = Store.loadProfiles()
-    let activeID = Store.loadActive(profiles)
-    let settings = Store.loadSettings()
-    let active = profiles.first { $0.id == activeID }
-
-    print("Reaper \(Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "?")")
-    print("defaults domain: \(Bundle.main.bundleIdentifier ?? "none -- not running from the bundle")")
-    print("profiles:        \(profiles.map { $0.name }.joined(separator: ", "))")
-    print("active:          \(active?.name ?? "?")  -- \(active?.detail ?? "")")
-    print("poll:            \(Int(settings.poll)) s")
-    print("inspect apps:    \(settings.inspectApps)")
-    print("login item:      \(LoginItem.enabled)")
-    print("")
-
-    let tracker = ProcTracker()
-    let gui = guiAppPIDs()
-    let (ctx, cap) = liveContext(guiApps: gui, inspectApps: settings.inspectApps)
-    _ = tracker.sample(ctx)
-    // A second sample a moment later: the first has no interval to divide by,
-    // so every CPU figure in it is zero.
-    Thread.sleep(forTimeInterval: 2)
-    let procs = tracker.sample(ctx)
-    let verdict = tracker.evaluate(procs, rules: active?.rules ?? [])
-
-    print("capability:      appsInspected=\(cap.appsInspected)"
-          + (cap.reason.isEmpty ? "" : "  (\(cap.reason))"))
-    print("sampled:         \(procs.count) processes, \(gui.count) of them apps")
-    print("zombies:         \(procs.filter { $0.isZombie }.count)")
-    print("orphans:         \(procs.filter { $0.isOrphan }.count)")
-    print("")
-
-    print("rules of \(active?.name ?? "?"):")
-    for r in active?.rules ?? [] {
-        let why = r.inactiveReason(cap)
-        print("  \(r.enabled ? "on " : "off") \(r.name.padding(toLength: 18, withPad: " ", startingAt: 0))"
-              + " \(r.summary)" + (why == nil ? "" : "   [inactive: \(why!)]"))
-    }
-    print("")
-
-    print("flagged: \(verdict.flagged.count)")
-    for f in verdict.flagged {
-        print("  \(f.proc.name) (\(f.proc.pid))  \(fmtCPU(f.proc.cpu))"
-              + "  by \(f.rule.name)  held \(fmtAge(f.heldFor))")
-    }
-    print("counting: \(verdict.holding.count)")
-    for h in verdict.holding {
-        print("  \(h.proc.name) (\(h.proc.pid))  \(fmtCPU(h.proc.cpu))"
-              + "  towards \(h.rule.name)  \(Int(h.progress * 100))% of \(fmtAge(h.rule.sustain))")
-    }
-    print("")
-    let mark = verdict.flagged.isEmpty
-        ? (verdict.holding.isEmpty ? "calm" : "holding \(verdict.holding.count)")
-        : "flagged \(verdict.flagged.count)"
-    print("the mark would be: \(mark)")
-}
-
+// `--diagnose` prints what the app sees and exits, without putting anything in
+// the menu bar. The text is the same one the About window copies.
 if CommandLine.arguments.contains("--diagnose") {
-    diagnose()
+    print(diagnosticsText())
     exit(0)
 }
 

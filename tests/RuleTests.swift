@@ -333,3 +333,50 @@ enum RuleTests {
         }
     }
 }
+
+// MARK: - diagnostics
+
+/// The text the About window copies and `--diagnose` prints. Checked for the
+/// lines a bug report is useless without, rather than against a fixed string:
+/// what it says about this machine depends on the machine.
+enum DiagnosticsTests {
+    static func run(_ check: (Bool, String, String) -> Void) {
+        let d = testDefaults()
+        // settle: 0 so the suite does not spend two seconds waiting for a
+        // second sample it is not going to read the CPU figures from.
+        let text = diagnosticsText(d, settle: 0)
+        let lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
+
+        for want in ["defaults domain:", "macOS:", "profiles:", "active:", "poll:",
+                     "inspect apps:", "capability:", "sampled:", "zombies:", "orphans:",
+                     "flagged:", "counting:", "the mark would be:"] {
+            check(lines.contains { $0.contains(want) },
+                  "diagnostics report \"\(want)\"", "")
+        }
+        check(text.hasPrefix("Reaper "), "diagnostics open with the app and its version",
+              String(text.prefix(20)))
+        check(lines.contains { $0.contains("rules of Balanced") },
+              "diagnostics name the active profile's rules", "")
+        // Every shipped rule has to appear, or a report would not say which
+        // ones were switched off.
+        for r in builtInProfiles[1].rules {
+            check(lines.contains { $0.contains(r.name) && $0.contains(r.summary) },
+                  "diagnostics list the \"\(r.name)\" rule with its summary", "")
+        }
+        check(lines.last?.contains("calm") == true || lines.last?.contains("flagged") == true
+                || lines.last?.contains("holding") == true,
+              "diagnostics end with which colour the mark would be", lines.last ?? "")
+
+        // The description the tooltip and the diagnostics share.
+        var v = ProcTracker.Verdict()
+        check(markDescription(v) == "calm", "an empty verdict is calm", markDescription(v))
+        let f = ProcTracker.Flag(proc: testProc(pid: 1, cpu: 900),
+                                 rule: WatchRule(name: "r", minCPU: 100),
+                                 heldFor: 10, sustained: true)
+        v.flagged = [f]
+        check(markDescription(v) == "flagged 1", "a flagged verdict counts them", markDescription(v))
+        v.flagged = []
+        v.holding = [f]
+        check(markDescription(v) == "holding 1", "a holding verdict counts them", markDescription(v))
+    }
+}

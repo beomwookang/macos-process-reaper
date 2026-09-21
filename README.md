@@ -9,7 +9,7 @@
 [![Apple Silicon](https://img.shields.io/badge/Apple%20Silicon-native-black)](#requirements)
 [![Language](https://img.shields.io/badge/Swift-AppKit%20only-orange)](app/)
 [![Privileges](https://img.shields.io/badge/privileges-none-brightgreen)](#permissions)
-[![Checks](https://img.shields.io/badge/checks-165-blue)](tests/)
+[![Checks](https://img.shields.io/badge/checks-188-blue)](tests/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 > A Mac that is hot, or slow, or out of memory usually has one process behind it,
@@ -85,6 +85,12 @@ To see what it is doing without opening anything:
 That prints the loaded profile, what the sampler found, what each rule made of
 it, and which colour the mark would be. It is the answer to "why is it amber",
 which a mark with three states and no text in two of them cannot give you.
+
+The same text is a click away without a terminal: **About Reaper** in the menu
+has a **Copy Diagnostics** button that puts it on the clipboard. If you are
+filing an issue, paste it in — it says which profile is loaded and what the
+rules made of your machine, which is otherwise the first thing anyone would have
+to ask you.
 
 ## The mark
 
@@ -290,7 +296,7 @@ ceiling each.
 
 ```sh
 make            # build/Reaper.app, universal, ad-hoc signed
-make test       # ./build/tests -- logic and drawing, no windows, 165 checks
+make test       # ./build/tests -- logic and drawing, no windows, 188 checks
 make app        # the bundle only
 make install    # copy to /Applications
 make uninstall  # remove the app and the login item

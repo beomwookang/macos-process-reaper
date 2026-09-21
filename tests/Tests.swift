@@ -57,6 +57,8 @@ enum Tests {
         WatchTests.run(check)
         print("views")
         ViewTests.run(check)
+        print("diagnostics")
+        DiagnosticsTests.run(check)
 
         UserDefaults().removePersistentDomain(forName: "com.local.reaper.tests")
         print("\(ran) checks, \(failed) failed")
