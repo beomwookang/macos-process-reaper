@@ -720,7 +720,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 // `--diagnose` prints what the app sees and exits, without putting anything in
 // the menu bar. The text is the same one the About window copies.
 if CommandLine.arguments.contains("--diagnose") {
-    print(diagnosticsText())
+    print(diagnosticsText(source: .commandLine))
     exit(0)
 }
 

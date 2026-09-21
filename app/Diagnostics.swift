@@ -21,7 +21,15 @@ import Foundation
 /// interval to divide by, so every CPU figure in it is zero; two seconds is
 /// long enough for the second to mean something and short enough that a menu
 /// item using this does not feel stuck.
-func diagnosticsText(_ d: UserDefaults = .standard, settle: TimeInterval = 2) -> String {
+/// Where the report was taken from, which changes how much one line of it can
+/// be trusted.
+enum DiagnosticsSource: String {
+    case about = "the About window"
+    case commandLine = "--diagnose on the command line"
+}
+
+func diagnosticsText(_ d: UserDefaults = .standard, settle: TimeInterval = 2,
+                     source: DiagnosticsSource = .about) -> String {
     var out: [String] = []
     func line(_ s: String = "") { out.append(s) }
     func field(_ k: String, _ v: String) {
@@ -34,6 +42,7 @@ func diagnosticsText(_ d: UserDefaults = .standard, settle: TimeInterval = 2) ->
     let active = profiles.first { $0.id == activeID }
 
     line("\(APP_NAME) \(appVersion)")
+    field("taken from:", source.rawValue)
     field("defaults domain:", Bundle.main.bundleIdentifier ?? "none -- not running from the bundle")
     // Which copy is running matters more than it looks: the bundle is ad-hoc
     // signed, so an Accessibility grant belongs to one copy of it. A report
@@ -67,6 +76,15 @@ func diagnosticsText(_ d: UserDefaults = .standard, settle: TimeInterval = 2) ->
 
     field("capability:", "appsInspected=\(cap.appsInspected)"
           + (cap.reason.isEmpty ? "" : "  (\(cap.reason))"))
+    // The permission belongs to whichever process is held responsible for the
+    // call, and for a binary started from a terminal that is the terminal, not
+    // this bundle. So the line above is only worth believing from the About
+    // window, and saying so is cheaper than explaining it twice.
+    if source == .commandLine && !cap.appsInspected {
+        line("                 ^ run from a terminal, so this may be wrong: macOS attributes")
+        line("                   the permission to the terminal. Check it with About Reaper")
+        line("                   \u{2192} Copy Diagnostics instead.")
+    }
     field("sampled:", "\(procs.count) processes, \(gui.count) of them apps")
     field("zombies:", "\(procs.filter { $0.isZombie }.count)")
     field("orphans:", "\(procs.filter { $0.isOrphan }.count)")

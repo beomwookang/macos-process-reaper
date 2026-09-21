@@ -347,7 +347,7 @@ enum DiagnosticsTests {
         let text = diagnosticsText(d, settle: 0)
         let lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
 
-        for want in ["defaults domain:", "bundle:", "macOS:", "profiles:", "active:", "poll:",
+        for want in ["taken from:", "defaults domain:", "bundle:", "macOS:", "profiles:", "active:", "poll:",
                      "inspect apps:", "notify:", "paused:", "never flagged:", "capability:",
                      "sampled:", "zombies:", "orphans:", "flagged:", "counting:", "history:",
                      "the mark would be:"] {
@@ -371,6 +371,18 @@ enum DiagnosticsTests {
         check(lines.last?.contains("calm") == true || lines.last?.contains("flagged") == true
                 || lines.last?.contains("holding") == true,
               "diagnostics end with which colour the mark would be", lines.last ?? "")
+
+        // A report has to say where it came from, because one line of it means
+        // something different depending on the answer.
+        check(text.contains("the About window"),
+              "diagnostics from the app say so", "")
+        let cli = diagnosticsText(d, settle: 0, source: .commandLine)
+        check(cli.contains("--diagnose on the command line"),
+              "diagnostics from the command line say so", "")
+        if cli.contains("appsInspected=false") {
+            check(cli.contains("attributes"),
+                  "and warn that the permission line may be wrong there", "")
+        }
 
         // The description the tooltip and the diagnostics share.
         var v = ProcTracker.Verdict()
