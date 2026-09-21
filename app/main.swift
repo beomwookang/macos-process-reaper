@@ -92,6 +92,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         buildMenu()
         drawMark()
+        // Where the notification permission stands, without asking for it:
+        // the answer belongs to the bundle and outlives the process, so a
+        // launch inheriting a switched-on setting has to look it up.
+        if settings.notify { Notify.refresh() }
         refresh()
         startTimer()
     }

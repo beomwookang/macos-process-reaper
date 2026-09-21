@@ -19,6 +19,24 @@ enum Notify {
     /// Whether the centre has said yes. nil until it has been asked.
     private(set) static var authorized: Bool?
 
+    /// Reads the standing answer without asking for one.
+    ///
+    /// Authorization belongs to the bundle and outlives the process, so a
+    /// launch that inherits a switched-on setting has to find out where it
+    /// stands. Without this `authorized` stayed nil after every relaunch and
+    /// post() quietly did nothing for someone who had already said yes.
+    static func refresh() {
+        UNUserNotificationCenter.current().getNotificationSettings { s in
+            DispatchQueue.main.async {
+                switch s.authorizationStatus {
+                case .authorized, .provisional, .ephemeral: authorized = true
+                case .denied: authorized = false
+                default: authorized = nil
+                }
+            }
+        }
+    }
+
     /// Asked for only when the switch is turned on, and only once per launch.
     static func request(_ done: @escaping (Bool) -> Void) {
         UNUserNotificationCenter.current()

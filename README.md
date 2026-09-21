@@ -2,14 +2,14 @@
 
 # macos-process-reaper — `Reaper`
 
-**A menu bar watch for the processes nobody remembers starting: sustained CPU and memory, plus the four broken states no threshold describes — zombie, orphan, windowless, not responding. It tells you; it never kills anything for you.** Needs no privileges, no daemon and no helper. Built on an M-series Mac and universal for Intel too.
+**A menu bar watch for the processes nobody remembers starting: sustained CPU, memory, disk writes and wake-ups, plus the four broken states no threshold describes — zombie, orphan, windowless, not responding. It tells you, remembers what it told you, and never kills anything for you.** Needs no privileges, no daemon and no helper. Built on an M-series Mac and universal for Intel too.
 
 [![build](https://github.com/beomwookang/macos-process-reaper/actions/workflows/build.yml/badge.svg)](https://github.com/beomwookang/macos-process-reaper/actions/workflows/build.yml)
 [![Platform](https://img.shields.io/badge/platform-macOS%2013%2B-lightgrey)](#requirements)
 [![Apple Silicon](https://img.shields.io/badge/Apple%20Silicon-native-black)](#requirements)
 [![Language](https://img.shields.io/badge/Swift-AppKit%20only-orange)](app/)
 [![Privileges](https://img.shields.io/badge/privileges-none-brightgreen)](#permissions)
-[![Checks](https://img.shields.io/badge/checks-188-blue)](tests/)
+[![Checks](https://img.shields.io/badge/checks-261-blue)](tests/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 > A Mac that is hot, or slow, or out of memory usually has one process behind it,
@@ -42,11 +42,15 @@ choice rather than a configuration exercise.
 
 | | |
 |---|---|
-| A mark that means one thing | Calm, amber while a rule is counting, red with a count once one holds |
-| Four kinds of trouble | Sustained CPU, memory, uptime — and zombie, orphan, windowless, not responding |
-| Profiles, then rules | Pick Quiet, Balanced or Aggressive; adjust the numbers underneath if you want to |
+| A mark that means one thing | Calm, amber while a rule is counting, red with a count once one holds, faint while paused |
+| Six things to measure | Sustained CPU, memory, uptime, disk write rate, idle wake-ups — each optional, all conjoined |
+| Four kinds of broken | Zombie, orphan, windowless, not responding |
+| Profiles, then rules | Pick Quiet, Balanced or Aggressive; the numbers underneath are there when you want them |
 | Sustain, so a build is not a bug | A condition has to keep holding before anything is said about it |
-| Detail when a row is not enough | Full command line, the chain of parents, threads, open files, a CPU trace |
+| A memory | What was flagged, when, for how long, how bad it got, and whether you ended it |
+| An escape hatch | Never flag this app, written against the bundle, so its helpers go too |
+| Pause | Fifteen minutes, an hour or four, for deliberately running something that would trip everything |
+| Detail when a row is not enough | Full command line, the chain of parents, threads, open files, disk, wake-ups, a CPU trace |
 | No privileges | No daemon, no helper, no `sudo`, no root. Installing is copying the app |
 | Nothing automatic | A rule flags. A person decides. There is no setting that changes this |
 
@@ -106,6 +110,7 @@ to ask you.
 | Outline, in the menu bar's own ink | Nothing flagged |
 | Amber | A rule's conditions are met and its sustain is still counting |
 | Red, with a count | That many processes are flagged |
+| The same outline, faint | Paused. Watching is suspended, and the mark says so rather than looking calm |
 
 ![The three states of the menu bar mark: a plain outlined chip, an amber chip, and a red chip with the number three beside it](assets/mark-states.png)
 
@@ -137,9 +142,20 @@ A rule that is switched on but cannot see what it needs says so, in orange, on
 its own line. Silence from a watchdog is meant to mean "nothing is wrong", so a
 rule that is quietly unable to look must not be silent.
 
-**The table** is what the rules make of the machine right now: what is flagged,
-then what is counting towards being flagged. Right-click a row for the two
-signals and the parent; double-click it for everything else.
+**Rules** is behind a disclosure, closed by default, with a line saying how many
+are switched on and how many cannot currently see. Nine rules at two lines each
+make a window taller than a laptop screen, and the profile is the decision most
+people make once.
+
+**Never flagged** appears above the table once there is something in it, and not
+at all before. A row's context menu writes one, against the app bundle, so
+excluding a browser excludes the six helpers it will start next.
+
+**The table** has three modes. *Flagged* is what the rules make of the machine
+right now — what is flagged, then what is counting towards being flagged.
+*All, by CPU* is every process you own. *History* is what was flagged and is
+not any more. Right-click a live row for the two signals, the parent and the
+exclusion; double-click it for everything else.
 
 ![The Processes window: the Aggressive profile selected, seven rules with their numbers and states, two of them marked inactive because the accessibility checks are off, and a table of flagged processes ending in Kill and Parent buttons](assets/window.png)
 
@@ -148,7 +164,25 @@ Two things in that picture are worth pointing at. The zombie's button says
 only thing that clears it. And the two rules using the accessibility states say
 **inactive**, with the reason, rather than sitting there flagging nothing.
 
-Double-clicking a row opens everything the row had no space for:
+### History
+
+The app was otherwise instantaneous: it knew what was wrong now and forgot it
+the moment the process exited. That leaves the question it was built for — *my
+Mac was hot an hour ago, what was it?* — unanswered for anyone who was not
+watching the menu bar at the time, which is most of the time.
+
+An entry is a process and a rule together, since the same process flagged by a
+different rule is a different thing to have happened. It records when the rule
+began holding rather than when the sustain elapsed, the worst readings rather
+than the last, and which of three things happened: it **went away**, you
+**ended it**, or it **still** has not stopped. That last distinction is most of
+why the entry is worth keeping. The log survives a relaunch, and anything still
+open when the app stopped is closed at the last tick that saw it rather than
+left looking current.
+
+![The History tab: three entries, one process still flagged after two minutes, one that went away after fifty-five seconds, and a zombie, each with the rule that flagged it, when it began, how long it lasted and its worst readings](assets/history.png)
+
+Double-clicking a live row opens everything the row had no space for:
 
 ![The detail window for a runaway process: a CPU trace rising past 500 per cent, its path, parent, start time, thread and open-file counts, the state explained in a sentence, the rule that flagged it, and its full command line](assets/detail.png)
 
@@ -164,6 +198,22 @@ Double-clicking a row opens everything the row had no space for:
 you edited, re-adding one you deleted — and leaves profiles of your own alone.
 They are matched on identity, not name, so renaming one does not turn it into a
 second one.
+
+## Two more things to measure
+
+Neither needs a permission, and neither costs anything to gather: both come from
+`rusage_info_v4`, which every sample already reads for CPU and memory. Measured
+on one machine, of 495 processes owned by the user, cumulative disk reads are
+non-zero for 474, writes for 224 and package idle wake-ups for 403.
+
+**Disk write rate** catches what CPU and memory cannot see. A log nobody
+rotates, or a sync loop, costs almost nothing to run and fills a disk. The read
+rate is sampled and shown but is not a condition: a process reading hard is
+usually doing its job, where one writing hard for hours usually is not.
+
+**Idle wake-ups** is the battery condition. A process can be cheap on CPU and
+still never let the package idle, which is the figure behind Activity Monitor's
+energy impact.
 
 ## The four states, and what they can actually tell you
 
@@ -267,12 +317,13 @@ nothing has to run as root to leave them out.
 - **Kill anything on its own.** A rule flags; a person decides. There is no
   setting for this. An app that ended processes by itself would be a worse
   version of the problem it exists to find.
-- **Notify.** The mark is the alert. A notification for something already red in
-  the corner of the screen is noise.
-- **Per-app whitelists or per-app limits.** Profiles cover the case this was
-  built for. App Tamer's per-app model is a bigger idea than this needs yet.
-- **Throttle or suspend.** It watches and reports. Holding a process at 20% of a
-  core is a different program.
+- **Notify by default.** The switch is there, under Notify When Flagged, because
+  the mark is not on screen in a full-screen app and the premise is that you
+  should not have to think to look. It is off until you ask: for a menu bar that
+  is visible, the mark is the alert and a notification on top of it is noise.
+- **Per-app limits.** Excluding an app is as far as this goes. Holding one at
+  twenty per cent of a core is a different program.
+- **Throttle or suspend.** It watches and reports.
 - **Run as root**, install a daemon, a helper, or a `sudoers` rule.
 
 ## Overhead
@@ -303,7 +354,7 @@ ceiling each.
 
 ```sh
 make            # build/Reaper.app, universal, ad-hoc signed
-make test       # ./build/tests -- logic and drawing, no windows, 188 checks
+make test       # ./build/tests -- logic and drawing, no windows, 261 checks
 make app        # the bundle only
 make install    # copy to /Applications
 make uninstall  # remove the app and the login item
@@ -353,7 +404,7 @@ There is not much, which is the point.
 |---|---|
 | `/Applications/Reaper.app` | The app. Written by `make install`, removed by `make uninstall` |
 | `~/Library/LaunchAgents/com.local.reaper.plist` | The login item, written only if you turn it on. It runs `open -a <the bundle it was switched on from>` and nothing else |
-| `com.local.reaper` in your user defaults | Profiles, the active profile, poll interval, the Inspect Apps switch |
+| `com.local.reaper` in your user defaults | Profiles, the active profile, the exclusions, the flag history, poll interval, and the Inspect Apps, Notify and Pause settings |
 
 No daemon, no LaunchDaemon, no `/etc/sudoers.d` entry, no helper binary, nothing
 owned by root, and nothing written outside your home directory except the bundle
