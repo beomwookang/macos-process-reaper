@@ -359,9 +359,14 @@ final class DetailWindow: NSWindowController, NSWindowDelegate {
         states.stringValue = lines.joined(separator: "\n")
 
         if let f = flag {
+            // A rule named after its only condition -- "Zombie", whose summary
+            // is "zombie" -- would otherwise read "Zombie: zombie."
+            let named = f.rule.name.lowercased() == f.rule.summary.lowercased()
+                ? f.rule.name
+                : "\(f.rule.name): \(f.rule.summary)"
             why.stringValue = f.sustained
-                ? "\(f.rule.name): \(f.rule.summary). Held for \(fmtAge(f.heldFor))."
-                : "\(f.rule.name): \(f.rule.summary). Held for \(fmtAge(f.heldFor)) of the "
+                ? "\(named). Held for \(fmtAge(f.heldFor))."
+                : "\(named). Held for \(fmtAge(f.heldFor)) of the "
                   + "\(fmtAge(f.rule.sustain)) it needs, so it is counting rather than flagged."
             why.textColor = f.sustained ? .systemRed : .systemOrange
         } else {

@@ -1,6 +1,16 @@
-# mac-process-reaper — `Reaper`
+![Reaper banner: pixel-art Mac mini with a glowing red chip, the word Reaper, and a process list with one runaway bar](assets/banner.png)
 
-**A menu bar watch for the processes nobody remembers starting. It tells you; it never kills anything for you.**
+# macos-process-reaper — `Reaper`
+
+**A menu bar watch for the processes nobody remembers starting: sustained CPU and memory, plus the four broken states no threshold describes — zombie, orphan, windowless, not responding. It tells you; it never kills anything for you.** Needs no privileges, no daemon and no helper. Built on an M-series Mac and universal for Intel too.
+
+[![build](https://github.com/beomwookang/macos-process-reaper/actions/workflows/build.yml/badge.svg)](https://github.com/beomwookang/macos-process-reaper/actions/workflows/build.yml)
+[![Platform](https://img.shields.io/badge/platform-macOS%2013%2B-lightgrey)](#requirements)
+[![Apple Silicon](https://img.shields.io/badge/Apple%20Silicon-native-black)](#requirements)
+[![Language](https://img.shields.io/badge/Swift-AppKit%20only-orange)](app/)
+[![Privileges](https://img.shields.io/badge/privileges-none-brightgreen)](#permissions)
+[![Checks](https://img.shields.io/badge/checks-165-blue)](tests/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
 > A Mac that is hot, or slow, or out of memory usually has one process behind it,
 > and it is rarely the one you are looking at. It is the headless browser a
@@ -12,6 +22,8 @@
 The mark in the menu bar is calm until a rule holds, and red when one does. If
 it is calm, the rules you chose have nothing to report. If it is red, something
 is named one click away, with the reason it was named and a button that ends it.
+
+---
 
 ## Why this exists
 
@@ -82,6 +94,8 @@ which a mark with three states and no text in two of them cannot give you.
 | Amber | A rule's conditions are met and its sustain is still counting |
 | Red, with a count | That many processes are flagged |
 
+![The three states of the menu bar mark: a plain outlined chip, an amber chip, and a red chip with the number three beside it](assets/mark-states.png)
+
 The chip fills from the bottom with how busy the machine is. That is not
 decoration: eight flagged processes on an idle machine and eight on a saturated
 one are different situations, and the mark should not read the same in both.
@@ -113,6 +127,17 @@ rule that is quietly unable to look must not be silent.
 **The table** is what the rules make of the machine right now: what is flagged,
 then what is counting towards being flagged. Right-click a row for the two
 signals and the parent; double-click it for everything else.
+
+![The Processes window: the Aggressive profile selected, seven rules with their numbers and states, two of them marked inactive because the accessibility checks are off, and a table of flagged processes ending in Kill and Parent buttons](assets/window.png)
+
+Two things in that picture are worth pointing at. The zombie's button says
+**Parent**, not Kill, because a zombie cannot be signalled and its parent is the
+only thing that clears it. And the two rules using the accessibility states say
+**inactive**, with the reason, rather than sitting there flagging nothing.
+
+Double-clicking a row opens everything the row had no space for:
+
+![The detail window for a runaway process: a CPU trace rising past 500 per cent, its path, parent, start time, thread and open-file counts, the state explained in a sentence, the rule that flagged it, and its full command line](assets/detail.png)
 
 ### Profiles as shipped
 
