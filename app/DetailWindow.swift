@@ -126,7 +126,7 @@ final class DetailWindow: NSWindowController, NSWindowDelegate {
     /// name rather than by index.
     private var facts: [String: NSTextField] = [:]
     private static let factOrder = ["Path", "Bundle", "Parent", "Started", "Memory",
-                                    "Threads", "Open files"]
+                                    "Disk", "Wake-ups", "Threads", "Open files"]
 
     init(_ p: ProcSample) {
         pid = p.pid
@@ -317,6 +317,7 @@ final class DetailWindow: NSWindowController, NSWindowDelegate {
             head.append("zombie")
         } else {
             head.append("CPU \(fmtCPU(p.cpu))")
+            if p.writeRate >= 512 { head.append("writing \(fmtRate(p.writeRate))") }
         }
         head.append("running \(fmtAge(p.age))")
         if let n = p.windows { head.append("\(n) window\(n == 1 ? "" : "s")") }
@@ -333,6 +334,13 @@ final class DetailWindow: NSWindowController, NSWindowDelegate {
             : chain.map { "\($0.name) (\($0.pid))" }.joined(separator: "  \u{2190}  ")
         facts["Started"]?.stringValue = "\(fmtWhen(p.started))   \u{2014}   \(fmtAge(p.age)) ago"
         facts["Memory"]?.stringValue = p.isZombie ? "\u{2013}" : fmtBytes(p.memory)
+        facts["Disk"]?.stringValue = p.isZombie ? "\u{2013}"
+            : "writing \(fmtRate(p.writeRate))   \u{00B7}   reading \(fmtRate(p.readRate))"
+        // The energy figure, in the units the kernel actually reports. A
+        // process can be cheap on CPU and still never let the package idle,
+        // which is what empties a battery.
+        facts["Wake-ups"]?.stringValue = p.isZombie ? "\u{2013}"
+            : "\(fmtWakeups(p.wakeupRate)) idle wake-ups"
         facts["Threads"]?.stringValue = threadCount(p.pid).map(String.init) ?? "\u{2013}"
         facts["Open files"]?.stringValue = fdCount(p.pid).map(String.init) ?? "\u{2013}"
 

@@ -336,6 +336,10 @@ struct WatchSettings: Codable, Equatable {
     var inspectApps = false
     /// The window's table opens on everything rather than on what is flagged.
     var showAll = false
+    /// The rule editor is open. Closed by default: once a profile is picked
+    /// the numbers under it are rarely touched, and nine rules at two lines
+    /// each make a window taller than a laptop screen.
+    var rulesOpen = false
     /// Watching is suspended until this moment. For deliberately running
     /// something that would trip every rule -- a long build, a big export --
     /// without turning the rules off and forgetting to turn them back on.
@@ -359,7 +363,7 @@ struct WatchSettings: Codable, Equatable {
     /// Declared rather than synthesised, because `probeHangs` is a key that is
     /// read and never written: it is the old name of `inspectApps`.
     private enum CodingKeys: String, CodingKey {
-        case poll, inspectApps, showAll, probeHangs, pausedUntil, notify
+        case poll, inspectApps, showAll, probeHangs, pausedUntil, notify, rulesOpen
     }
 
     init() {}
@@ -369,6 +373,7 @@ struct WatchSettings: Codable, Equatable {
         try c.encode(poll, forKey: .poll)
         try c.encode(inspectApps, forKey: .inspectApps)
         try c.encode(showAll, forKey: .showAll)
+        try c.encode(rulesOpen, forKey: .rulesOpen)
         try c.encodeIfPresent(pausedUntil, forKey: .pausedUntil)
         try c.encode(notify, forKey: .notify)
     }
@@ -383,6 +388,7 @@ struct WatchSettings: Codable, Equatable {
             ?? c.decodeIfPresent(Bool.self, forKey: .probeHangs) ?? false
         showAll = try c.decodeIfPresent(Bool.self, forKey: .showAll) ?? false
         notify = try c.decodeIfPresent(Bool.self, forKey: .notify) ?? false
+        rulesOpen = try c.decodeIfPresent(Bool.self, forKey: .rulesOpen) ?? false
         pausedUntil = try c.decodeIfPresent(Date.self, forKey: .pausedUntil)
         // A stored poll from a future version, or a hand-edited zero, would
         // otherwise become a timer that fires continuously.

@@ -19,6 +19,10 @@ enum MarkState: Equatable {
     case calm
     case holding(Int)
     case flagged(Int)
+    /// Watching is suspended. Drawn faint, because the promise the mark makes
+    /// is that calm means nothing to report -- and a paused watch has nothing
+    /// to report for a different reason, which it has to admit to.
+    case paused
 }
 
 private let MARK_H: CGFloat = 18
@@ -48,6 +52,14 @@ func statusMark(_ state: MarkState, load: SystemLoad?) -> NSImage {
         // light/dark switch and a tinted desktop without being told.
         ink = .black
         template = true
+    case .paused:
+        label = nil
+        // Still a template, so it still follows the bar's ink -- just faintly.
+        // The faintness is `dim` below, not an alpha on this colour: drawChip
+        // sets its own alphas per element, and an alpha here would be
+        // overwritten and silently ignored.
+        ink = .black
+        template = true
     case .holding:
         label = nil
         ink = .systemOrange
@@ -64,8 +76,11 @@ func statusMark(_ state: MarkState, load: SystemLoad?) -> NSImage {
     let textW = label.map { $0.size(withAttributes: attrs).width } ?? 0
     let width = CHIP_W + (label == nil ? 0 : gap + textW)
 
+    // A template image's alpha is the mask, so drawing the whole mark at a
+    // fraction of its opacity is what makes a faint mark rather than a grey one.
+    let dim: CGFloat = state == .paused ? 0.34 : 1
     let img = NSImage(size: NSSize(width: width, height: MARK_H), flipped: false) { _ in
-        drawChip(at: .zero, ink: ink, load: load)
+        drawChip(at: .zero, ink: ink, load: load, dim: dim)
         if let label {
             // A stated baseline rather than a centred rect: an 11pt digit box is
             // about 13pt tall, and centring the box leaves the glyph high.
@@ -80,17 +95,17 @@ func statusMark(_ state: MarkState, load: SystemLoad?) -> NSImage {
 /// The chip: a rounded rectangle standing for the machine, filled from the
 /// bottom with how much of it is busy. Outline always, fill only as far as the
 /// load goes.
-private func drawChip(at o: NSPoint, ink: NSColor, load: SystemLoad?) {
+private func drawChip(at o: NSPoint, ink: NSColor, load: SystemLoad?, dim: CGFloat = 1) {
     let r = NSRect(x: o.x + 1.5, y: o.y + 2.5, width: CHIP_W - 3, height: MARK_H - 5)
     let radius: CGFloat = 3
 
     let outline = NSBezierPath(roundedRect: r, xRadius: radius, yRadius: radius)
     outline.lineWidth = 1.4
-    ink.withAlphaComponent(0.9).setStroke()
+    ink.withAlphaComponent(0.9 * dim).setStroke()
     outline.stroke()
 
     // Two legs a side, so the outline reads as a chip and not as a text field.
-    ink.withAlphaComponent(0.9).setFill()
+    ink.withAlphaComponent(0.9 * dim).setFill()
     for dy in [r.height * 0.3, r.height * 0.62] {
         for x in [r.minX - 2.2, r.maxX + 0.4] {
             NSBezierPath(rect: NSRect(x: x, y: r.minY + dy, width: 1.8, height: 1.3)).fill()
@@ -106,7 +121,7 @@ private func drawChip(at o: NSPoint, ink: NSColor, load: SystemLoad?) {
     // the corners the outline just drew.
     NSGraphicsContext.saveGraphicsState()
     NSBezierPath(roundedRect: inner, xRadius: 1.6, yRadius: 1.6).setClip()
-    ink.withAlphaComponent(0.55).setFill()
+    ink.withAlphaComponent(0.55 * dim).setFill()
     NSBezierPath(rect: filled).fill()
     NSGraphicsContext.restoreGraphicsState()
 }

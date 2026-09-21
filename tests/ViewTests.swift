@@ -15,6 +15,7 @@ enum ViewTests {
         mark(check)
         rows(check)
         buttons(check)
+        columns(check)
         drawing(check)
     }
 
@@ -48,6 +49,12 @@ enum ViewTests {
         // The load is a fill, so it must not change the size of anything.
         check(statusMark(.calm, load: nil).size == calm.size,
               "a mark with no load reading is the same size as one with", "")
+
+        // Paused is the calm glyph, faint, and still a template so it keeps
+        // following the menu bar's own ink.
+        let paused = statusMark(.paused, load: load)
+        check(paused.isTemplate, "the paused mark is still a template", "")
+        check(paused.size == calm.size, "and the same size as calm", "\(paused.size)")
     }
 
     // MARK: - the row's info line
@@ -113,6 +120,22 @@ enum ViewTests {
               "a zombie with no reachable parent is a dead end, and says so", b.toolTip ?? "")
     }
 
+    // MARK: - column arithmetic
+
+    /// The table narrows only its first column, so a set of fixed widths that
+    /// sums past the table clips the last one instead. That is a silent
+    /// failure -- a header reading "Outcor" -- so it is checked rather than
+    /// eyeballed.
+    static func columns(_ check: (Bool, String, String) -> Void) {
+        for (what, cols) in [("live", ProcessWindow.liveColumnWidths),
+                             ("history", ProcessWindow.historyColumnWidths)] {
+            let sum = cols.reduce(0, +)
+            check(sum < ProcessWindow.tableWidth,
+                  "the \(what) columns fit the table",
+                  "\(Int(sum)) of \(Int(ProcessWindow.tableWidth))")
+        }
+    }
+
     // MARK: - actually drawing it
 
     /// Renders into a bitmap. The mark is built with a lazy drawing handler, so
@@ -145,7 +168,7 @@ enum ViewTests {
 
     private static func drawing(_ check: (Bool, String, String) -> Void) {
         for (name, state) in [("calm", MarkState.calm), ("holding", .holding(2)),
-                              ("flagged", .flagged(3))] {
+                              ("flagged", .flagged(3)), ("paused", .paused)] {
             guard let rep = render(statusMark(state, load: load)) else {
                 check(false, "the \(name) mark renders at all", "no bitmap context")
                 continue
@@ -168,5 +191,21 @@ enum ViewTests {
         } else {
             check(false, "the mark renders at both ends of the load range", "")
         }
+
+        // Paused has to be visibly fainter, or it says the same thing as calm.
+        func alphaWeight(_ s: MarkState) -> Double {
+            guard let rep = render(statusMark(s, load: load)) else { return -1 }
+            var total = 0.0
+            for y in 0..<rep.pixelsHigh {
+                for x in 0..<rep.pixelsWide {
+                    total += Double(rep.colorAt(x: x, y: y)?.alphaComponent ?? 0)
+                }
+            }
+            return total
+        }
+        let calmWeight = alphaWeight(.calm), pausedWeight = alphaWeight(.paused)
+        check(pausedWeight > 0 && pausedWeight < calmWeight * 0.7,
+              "the paused mark is drawn markedly fainter than the calm one",
+              "\(Int(calmWeight)) vs \(Int(pausedWeight))")
     }
 }

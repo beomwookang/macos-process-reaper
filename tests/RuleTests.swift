@@ -348,8 +348,9 @@ enum DiagnosticsTests {
         let lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
 
         for want in ["defaults domain:", "bundle:", "macOS:", "profiles:", "active:", "poll:",
-                     "inspect apps:", "capability:", "sampled:", "zombies:", "orphans:",
-                     "flagged:", "counting:", "the mark would be:"] {
+                     "inspect apps:", "notify:", "paused:", "never flagged:", "capability:",
+                     "sampled:", "zombies:", "orphans:", "flagged:", "counting:", "history:",
+                     "the mark would be:"] {
             check(lines.contains { $0.contains(want) },
                   "diagnostics report \"\(want)\"", "")
         }

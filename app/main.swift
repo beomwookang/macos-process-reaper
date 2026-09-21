@@ -39,6 +39,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private var procs: [ProcSample] = []
     private var verdict = ProcTracker.Verdict()
     private var capability = WatchCapability()
+    private var exclusions = Store.loadExclusions()
+    private var history = Store.loadHistory()
 
     /// When SIGTERM went out, per pid. The one record, shared with every window.
     private var termSent: [pid_t: Date] = [:]
@@ -69,6 +71,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let grantItem = NSMenuItem(title: "Grant Accessibility\u{2026}",
                                        action: #selector(grantAccessibility), keyEquivalent: "")
     private let pollMenu = NSMenu()
+    private let pauseMenu = NSMenu()
+    private let pauseItem = NSMenuItem(title: "Pause", action: nil, keyEquivalent: "")
+    private let resumeItem = NSMenuItem(title: "", action: #selector(resume), keyEquivalent: "")
+    private let notifyItem = NSMenuItem(title: "Notify When Flagged",
+                                        action: #selector(toggleNotify), keyEquivalent: "")
     private let loginItem = NSMenuItem(title: "Start at Login", action: #selector(toggleLogin),
                                        keyEquivalent: "")
 
@@ -142,6 +149,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let pollItem = NSMenuItem(title: "Sample Every", action: nil, keyEquivalent: "")
         pollItem.submenu = pollMenu
         m.addItem(pollItem)
+
+        notifyItem.target = self
+        notifyItem.toolTip = "The mark is the alert, and it is not on screen in a full-screen app. "
+                           + "One notification per process, the first time it is flagged."
+        m.addItem(notifyItem)
+
+        m.addItem(.separator())
+
+        // Pause, for deliberately running something that would trip every rule.
+        // The two items swap: one to start a pause, one to end it early, and
+        // never both, so the menu always says what the state is.
+        for s in WatchSettings.pauseChoices {
+            let mi = NSMenuItem(title: s >= 3600
+                                    ? "For \(Int(s / 3600)) hour\(s >= 7200 ? "s" : "")"
+                                    : "For \(Int(s / 60)) minutes",
+                                action: #selector(pause(_:)), keyEquivalent: "")
+            mi.target = self
+            mi.representedObject = s
+            pauseMenu.addItem(mi)
+        }
+        pauseItem.submenu = pauseMenu
+        m.addItem(pauseItem)
+        resumeItem.target = self
+        resumeItem.isHidden = true
+        m.addItem(resumeItem)
 
         m.addItem(.separator())
         loginItem.target = self
@@ -236,13 +268,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // probe that deliberately waits on apps that are not answering -- runs
         // on the sample queue, where a slow answer costs nothing.
         let gui = guiAppPIDs()
-        let rules = activeRules
+        // Paused means no rule holds, and the clocks are reset on resume, so
+        // nothing accumulates while the watch is off. Sampling continues: the
+        // CPU figures and the traces are wanted the moment it comes back, and
+        // the window is still worth looking at while paused.
+        let rules = settings.paused() ? [] : activeRules
         let inspect = settings.inspectApps
+        let excluded = excludedPaths(exclusions)
         sampleQueue.async { [weak self] in
             guard let self else { return }
             let (ctx, cap) = liveContext(guiApps: gui, inspectApps: inspect)
             let procs = self.tracker.sample(ctx)
-            let verdict = self.tracker.evaluate(procs, rules: rules)
+            let verdict = self.tracker.evaluate(procs, rules: rules, excluded: excluded)
             let load = self.tracker.systemLoad()
             let traces = Dictionary(uniqueKeysWithValues:
                 self.details.keys.map { ($0, self.tracker.traceFor($0)) })
@@ -262,6 +299,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         let alive = Set(procs.map { $0.pid })
         termSent = termSent.filter { alive.contains($0.key) }
 
+        // The log before the mark: a notification should say what the mark is
+        // about to show, and both come from the same fold.
+        let fresh = history.record(verdict.flagged)
+        if !fresh.isEmpty {
+            Store.saveHistory(history)
+            if settings.notify { Notify.post(fresh) }
+        } else if history.events.contains(where: { $0.ended != nil })
+                    && verdict.flagged.count != history.open.count {
+            // Something closed. Worth writing out, since the alternative is
+            // losing the end of every entry to a crash or a restart.
+            Store.saveHistory(history)
+        }
+
         drawMark()
         headline.title = ProcessWindow.headlineText(load)
         rebuildRows()
@@ -274,13 +324,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         // checked box that does nothing.
         grantItem.isHidden = !(settings.inspectApps && !cap.appsInspected)
         loginItem.state = LoginItem.enabled ? .on : .off
+        notifyItem.state = settings.notify ? .on : .off
         for mi in pollMenu.items {
             mi.state = (mi.representedObject as? TimeInterval) == settings.poll ? .on : .off
+        }
+        let paused = settings.paused()
+        pauseItem.isHidden = paused
+        resumeItem.isHidden = !paused
+        if let until = settings.pausedUntil, paused {
+            resumeItem.title = "Resume \u{2014} paused until "
+                             + DateFormatter.localizedString(from: until, dateStyle: .none,
+                                                             timeStyle: .short)
         }
 
         if processes?.window?.isVisible == true {
             processes?.update(load: load, procs: procs, verdict: verdict,
-                              capability: cap, termSent: termSent)
+                              capability: cap, history: history.events, termSent: termSent)
         }
         for (pid, w) in details {
             guard w.window?.isVisible == true else { details.removeValue(forKey: pid); continue }
@@ -296,7 +355,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     /// outside it would be stale after a light/dark switch.
     private func drawMark() {
         let state: MarkState
-        if !verdict.flagged.isEmpty {
+        if settings.paused() {
+            state = .paused
+        } else if !verdict.flagged.isEmpty {
             state = .flagged(verdict.flagged.count)
         } else if !verdict.holding.isEmpty {
             state = .holding(verdict.holding.count)
@@ -314,6 +375,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         item.button?.toolTip = {
             switch state {
             case .calm: return "Nothing flagged."
+            case .paused:
+                guard let until = settings.pausedUntil else { return "Paused." }
+                return "Paused until " + DateFormatter.localizedString(
+                    from: until, dateStyle: .none, timeStyle: .short) + "."
             case .holding(let n): return "\(n) process\(n == 1 ? "" : "es") counting towards a rule."
             case .flagged(let n): return "\(n) process\(n == 1 ? "" : "es") flagged."
             }
@@ -365,6 +430,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 : "Could not signal \(p.name) (\(p.pid)): \(String(cString: strerror(e)))"
         }
         if termSent[p.pid] == nil { termSent[p.pid] = Date() }
+        // So the entry says what happened to it. "It went away" and "I ended
+        // it" are different answers, and only this knows which.
+        history.markSignalled(pid: p.pid, startedMicros: p.startedMicros)
+        Store.saveHistory(history)
         return nil
     }
 
@@ -475,6 +544,60 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         refresh()
     }
 
+    @objc private func pause(_ sender: NSMenuItem) {
+        guard let s = sender.representedObject as? TimeInterval else { return }
+        settings.pausedUntil = Date().addingTimeInterval(s)
+        Store.saveSettings(settings)
+        // Nothing has held through a pause, so nothing carries a clock out of
+        // one. Cleared going in as well as coming out, so a rule cannot fire
+        // the instant the pause ends on time it accumulated before it began.
+        sampleQueue.async { self.tracker.resetAll() }
+        refresh()
+    }
+
+    @objc private func resume() {
+        settings.pausedUntil = nil
+        Store.saveSettings(settings)
+        sampleQueue.async { self.tracker.resetAll() }
+        refresh()
+    }
+
+    /// Asked for when the switch goes on, because a notification permission
+    /// requested at launch by something with no visible window is a prompt
+    /// nobody has any context for.
+    @objc private func toggleNotify() {
+        let want = !settings.notify
+        settings.notify = want
+        Store.saveSettings(settings)
+        if want {
+            Notify.request { [weak self] granted in
+                guard let self else { return }
+                if !granted {
+                    self.settings.notify = false
+                    Store.saveSettings(self.settings)
+                    self.alert("Notifications are not allowed",
+                               "macOS declined, so the switch is back off. Turn Reaper on under "
+                               + "Notifications in System Settings and switch this on again.\n\n"
+                               + "The mark in the menu bar does not need the permission and keeps "
+                               + "working either way.")
+                }
+                self.refresh()
+            }
+        }
+        refresh()
+    }
+
+    private func applyExclusions(_ new: [Exclusion]) {
+        exclusions = new
+        Store.saveExclusions(new)
+        // An excluded process should stop counting at once, and one that has
+        // just been let back in should start from now rather than from a clock
+        // that kept running while it was excluded.
+        sampleQueue.async { self.tracker.resetAll() }
+        processes?.setExclusions(new)
+        refresh()
+    }
+
     @objc private func toggleLogin() {
         LoginItem.set(!LoginItem.enabled, appPath: Bundle.main.bundlePath)
         loginItem.state = LoginItem.enabled ? .on : .off
@@ -484,7 +607,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     @objc private func openProcesses() {
         if processes == nil {
-            let w = ProcessWindow(profiles: profiles, active: activeID, showAll: settings.showAll)
+            let w = ProcessWindow(profiles: profiles, active: activeID,
+                                  showAll: settings.showAll, exclusions: exclusions,
+                                  rulesOpen: settings.rulesOpen)
             w.onProfilesChanged = { [weak self] new in self?.applyProfiles(new) }
             w.onActiveChanged = { [weak self] id in self?.applyActive(id) }
             w.onKill = { [weak self] p, sig in self?.killProc(p, sig) }
@@ -495,14 +620,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 self.settings.showAll = on
                 Store.saveSettings(self.settings)
             }
+            w.onExclusionsChanged = { [weak self] x in self?.applyExclusions(x) }
+            w.onRulesOpenChanged = { [weak self] on in
+                guard let self else { return }
+                self.settings.rulesOpen = on
+                Store.saveSettings(self.settings)
+            }
+            w.onClearHistory = { [weak self] in
+                guard let self else { return }
+                self.history.clear()
+                Store.saveHistory(self.history)
+            }
             processes = w
         }
         processes?.setProfiles(profiles, active: activeID)
+        processes?.setExclusions(exclusions)
         NSApp.activate(ignoringOtherApps: true)
         processes?.showWindow(nil)
         processes?.window?.makeKeyAndOrderFront(nil)
         processes?.update(load: load, procs: procs, verdict: verdict,
-                          capability: capability, termSent: termSent)
+                          capability: capability, history: history.events, termSent: termSent)
     }
 
     @objc private func openAbout() {
@@ -544,6 +681,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     // login item, which only ever starts this app.
     @objc private func quit() {
         NSApp.terminate(nil)
+    }
+
+    /// The peaks of anything still open are only in memory between
+    /// transitions, so they are written out on the way down.
+    func applicationWillTerminate(_ n: Notification) {
+        Store.saveHistory(history)
+        Store.saveSettings(settings)
     }
 }
 

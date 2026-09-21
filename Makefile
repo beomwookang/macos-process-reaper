@@ -11,7 +11,7 @@ APP = build/Reaper.app
 # main.swift must come last for swiftc to accept it as the entry point.
 SWIFT = app/Core.swift app/Watch.swift app/Rules.swift app/History.swift \
         app/Diagnostics.swift app/StatusArt.swift app/ProcessWindow.swift app/DetailWindow.swift \
-        app/AboutWindow.swift app/main.swift
+        app/AboutWindow.swift app/Notify.swift app/main.swift
 
 all: $(APP)
 

@@ -12,7 +12,7 @@
 
 import AppKit
 
-private let INNER: CGFloat = 760
+private let INNER: CGFloat = 880
 private let PAD: CGFloat = 20
 private let TABLE_H: CGFloat = 260
 
@@ -34,6 +34,12 @@ final class ProcessWindow: NSWindowController, NSWindowDelegate, NSMenuDelegate,
     var onDetail: ((ProcSample) -> Void)?
     /// The table's mode is remembered between launches, so it goes to settings.
     var onShowAllChanged: ((Bool) -> Void)?
+    /// The exclusion list changed -- one was removed here, or added from a row.
+    var onExclusionsChanged: (([Exclusion]) -> Void)?
+    /// Forget the history.
+    var onClearHistory: (() -> Void)?
+    /// The rule editor was opened or closed; remembered between launches.
+    var onRulesOpenChanged: ((Bool) -> Void)?
 
     private(set) var profiles: [Profile]
     private(set) var activeID: UUID
@@ -50,12 +56,19 @@ final class ProcessWindow: NSWindowController, NSWindowDelegate, NSMenuDelegate,
 
     // MARK: - state
 
+    /// Which list the table is showing. History is a different set of columns
+    /// rather than the same ones meaning different things, so the headers can
+    /// never describe the wrong thing.
+    private enum Mode: Int { case flagged = 0, all = 1, history = 2 }
+
     private struct Row { let proc: ProcSample; let flag: ProcTracker.Flag? }
     private var procs: [ProcSample] = []
     private var flags: [ProcTracker.Flag] = []
     private var holding: [ProcTracker.Flag] = []
     private var rows: [Row] = []
-    private var showAll: Bool
+    private var past: [FlagEvent] = []
+    private var exclusions: [Exclusion] = []
+    private var mode2: Mode = .flagged
     private var cap = WatchCapability()
 
     /// When SIGTERM went out, per pid -- the app's record, pushed in with each
@@ -72,8 +85,15 @@ final class ProcessWindow: NSWindowController, NSWindowDelegate, NSMenuDelegate,
     private let profileNote = NSTextField(labelWithString: "")
     private let rulesStack = NSStackView()
     private let listTitle = NSTextField(labelWithString: "")
-    private let mode = NSSegmentedControl(labels: ["Flagged", "All, by CPU"],
+    private let mode = NSSegmentedControl(labels: ["Flagged", "All, by CPU", "History"],
                                           trackingMode: .selectOne, target: nil, action: nil)
+    private let clearHistory = NSButton(title: "Clear", target: nil, action: nil)
+    private let rulesToggle = NSButton()
+    private let rulesNote = NSTextField(labelWithString: "")
+    private let addRuleButton = NSButton(title: "Add Rule", target: nil, action: nil)
+    private let rulesHelp = NSTextField(labelWithString: "")
+    private let exclusionTitle = NSTextField(labelWithString: "")
+    private let exclusionStack = NSStackView()
     private let table = NSTableView()
     private let scroll = NSScrollView()
     private let context = NSMenu()
@@ -82,10 +102,15 @@ final class ProcessWindow: NSWindowController, NSWindowDelegate, NSMenuDelegate,
 
     // MARK: - setup
 
-    init(profiles: [Profile], active: UUID, showAll: Bool) {
+    private var rulesOpen: Bool
+
+    init(profiles: [Profile], active: UUID, showAll: Bool, exclusions: [Exclusion],
+         rulesOpen: Bool) {
         self.profiles = profiles
         self.activeID = active
-        self.showAll = showAll
+        self.mode2 = showAll ? .all : .flagged
+        self.exclusions = exclusions
+        self.rulesOpen = rulesOpen
         let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: INNER + PAD * 2, height: 640),
                          styleMask: [.titled, .closable, .miniaturizable, .resizable],
                          backing: .buffered, defer: false)
@@ -153,11 +178,27 @@ final class ProcessWindow: NSWindowController, NSWindowDelegate, NSMenuDelegate,
         stack.addArrangedSubview(row([profileBar, profileNote]))
         rebuildProfileBar()
 
-        // --- rules
+        // --- rules, behind a disclosure. The profile is the decision most
+        // people make once; the numbers under it are real but rarely touched,
+        // and nine rules at two lines each make a window taller than a laptop
+        // screen. So they open when asked for, and stay open if you ask.
+        rulesToggle.setButtonType(.onOff)
+        rulesToggle.bezelStyle = .disclosure
+        rulesToggle.title = ""
+        rulesToggle.target = self
+        rulesToggle.action = #selector(toggleRulesOpen)
+        rulesToggle.state = rulesOpen ? .on : .off
         let rulesTitle = label("Rules")
         rulesTitle.font = .boldSystemFont(ofSize: 13)
-        stack.addArrangedSubview(row([rulesTitle, NSView(),
-                                      button("Add Rule", #selector(addRule))]))
+        rulesNote.font = .systemFont(ofSize: 11)
+        rulesNote.textColor = .secondaryLabelColor
+        addRuleButton.target = self
+        addRuleButton.action = #selector(addRule)
+        addRuleButton.bezelStyle = .rounded
+        addRuleButton.controlSize = .small
+        addRuleButton.font = .systemFont(ofSize: 11)
+        stack.addArrangedSubview(row([rulesToggle, rulesTitle, rulesNote, NSView(),
+                                      addRuleButton]))
 
         rulesStack.orientation = .vertical
         rulesStack.alignment = .leading
@@ -165,21 +206,47 @@ final class ProcessWindow: NSWindowController, NSWindowDelegate, NSMenuDelegate,
         stack.addArrangedSubview(rulesStack)
         rebuildRules()
 
-        stack.addArrangedSubview(label(
+        rulesHelp.font = .systemFont(ofSize: 11)
+        rulesHelp.textColor = .secondaryLabelColor
+        rulesHelp.lineBreakMode = .byWordWrapping
+        rulesHelp.maximumNumberOfLines = 0
+        rulesHelp.preferredMaxLayoutWidth = INNER
+        rulesHelp.stringValue =
             "Every condition a rule sets has to hold, and keep holding for its \u{201C}for\u{201D} "
             + "time, before a process is flagged. CPU is percent of one core, as in top: 800 is "
             + "eight cores busy. Leave a number empty to leave it out of the rule. Editing a rule "
-            + "restarts its clock.",
-            size: 11, color: .secondaryLabelColor, wrap: INNER))
+            + "restarts its clock."
+        rulesHelp.widthAnchor.constraint(equalToConstant: INNER).isActive = true
+        stack.addArrangedSubview(rulesHelp)
+        applyRulesOpen()
+
+        // --- exclusions, shown only when there are any: a heading over an
+        // empty list is a feature advertising itself at the cost of everyone
+        // who does not use it.
+        exclusionTitle.font = .boldSystemFont(ofSize: 13)
+        exclusionTitle.stringValue = "Never flagged"
+        stack.addArrangedSubview(row([exclusionTitle, NSView()]))
+        exclusionStack.orientation = .vertical
+        exclusionStack.alignment = .leading
+        exclusionStack.spacing = 3
+        stack.addArrangedSubview(exclusionStack)
+        rebuildExclusions()
 
         // --- the list
         listTitle.font = .boldSystemFont(ofSize: 13)
-        mode.selectedSegment = showAll ? 1 : 0
+        mode.selectedSegment = mode2.rawValue
         mode.controlSize = .small
         mode.font = .systemFont(ofSize: 11)
         mode.target = self
         mode.action = #selector(modeChanged)
-        stack.addArrangedSubview(row([listTitle, NSView(), mode]))
+        clearHistory.target = self
+        clearHistory.action = #selector(clearHistoryClicked)
+        clearHistory.bezelStyle = .rounded
+        clearHistory.controlSize = .small
+        clearHistory.font = .systemFont(ofSize: 11)
+        clearHistory.isHidden = true
+        clearHistory.toolTip = "Forget every entry below."
+        stack.addArrangedSubview(row([listTitle, NSView(), clearHistory, mode]))
 
         buildTable()
         scroll.documentView = table
@@ -358,9 +425,18 @@ final class ProcessWindow: NSWindowController, NSWindowDelegate, NSMenuDelegate,
             }
             numbers.widthAnchor.constraint(equalToConstant: INNER).isActive = true
 
-            // Line two: the states, indented under the name, and the reason the
-            // rule cannot currently see when that is the case.
-            var stateViews: [NSView] = [spacer(28), caption("state")]
+            // Line two: the two rates, then the states, indented under the
+            // name, and a short marker when the rule cannot currently see. The
+            // full reason is in that marker's tooltip -- spelled out inline it
+            // ran the row past the width of the window.
+            var stateViews: [NSView] = [
+                spacer(28),
+                caption("write \u{2265}"), numField(r.minWriteKBs, width: 58, id: "\(i):write"),
+                caption("KB/s"),
+                caption("wakeups \u{2265}"), numField(r.minWakeups, width: 44, id: "\(i):wake"),
+                caption("/s"),
+                caption("state"),
+            ]
             for s in WatchState.allCases {
                 let box = StateBox(checkboxWithTitle: s.label, target: self,
                                    action: #selector(toggleState(_:)))
@@ -372,14 +448,17 @@ final class ProcessWindow: NSWindowController, NSWindowDelegate, NSMenuDelegate,
                 stateViews.append(box)
             }
             if let why = r.inactiveReason(self.cap) {
-                let warn = label("\u{2014} inactive: \(why)", size: 11, color: .systemOrange)
-                warn.toolTip = "This rule is switched on, but cannot see what it needs to, "
-                             + "so it is flagging nothing."
+                let warn = label("\u{2014} inactive", size: 11, color: .systemOrange)
+                warn.toolTip = "This rule is switched on but cannot see what it needs to, so it "
+                             + "is flagging nothing: \(why)."
                 stateViews.append(warn)
             }
             stateViews.append(NSView())
             let states = NSStackView(views: stateViews)
-            states.spacing = 10
+            states.spacing = 6
+            for k in [0, 3, 6] where k < states.arrangedSubviews.count {
+                states.setCustomSpacing(14, after: states.arrangedSubviews[k])
+            }
             states.widthAnchor.constraint(equalToConstant: INNER).isActive = true
 
             let group = NSStackView(views: [numbers, states])
@@ -392,6 +471,76 @@ final class ProcessWindow: NSWindowController, NSWindowDelegate, NSMenuDelegate,
             rulesStack.addArrangedSubview(label("No rules in this profile. Add one, or restore the profiles.",
                                                 size: 11, color: .secondaryLabelColor))
         }
+        applyRulesOpen()
+    }
+
+    /// One line per excluded app, with the button that puts it back. Hidden
+    /// entirely, heading included, when there are none.
+    private func rebuildExclusions() {
+        for v in exclusionStack.arrangedSubviews {
+            exclusionStack.removeArrangedSubview(v)
+            v.removeFromSuperview()
+        }
+        exclusionTitle.isHidden = exclusions.isEmpty
+        exclusionStack.isHidden = exclusions.isEmpty
+        guard !exclusions.isEmpty else { return }
+        for (i, x) in exclusions.enumerated() {
+            let put = NSButton(title: "\u{2212}", target: self, action: #selector(removeExclusion(_:)))
+            put.bezelStyle = .rounded
+            put.controlSize = .small
+            put.tag = i
+            put.toolTip = "Watch \(x.name) again"
+            let name = label(x.name, size: 12)
+            name.widthAnchor.constraint(equalToConstant: 180).isActive = true
+            let where_ = label((x.appPath as NSString).abbreviatingWithTildeInPath,
+                               size: 10, color: .secondaryLabelColor)
+            where_.lineBreakMode = .byTruncatingMiddle
+            let line = NSStackView(views: [put, name, where_, NSView()])
+            line.spacing = 8
+            line.widthAnchor.constraint(equalToConstant: INNER).isActive = true
+            exclusionStack.addArrangedSubview(line)
+        }
+    }
+
+    @objc private func removeExclusion(_ sender: NSButton) {
+        guard sender.tag < exclusions.count else { return }
+        let gone = exclusions.remove(at: sender.tag)
+        rebuildExclusions()
+        resize(grow: true)
+        onExclusionsChanged?(exclusions)
+        onRefresh?()
+        say("Watching \(gone.name) again. Its rules start counting from now.")
+    }
+
+    /// Exclusions changed elsewhere -- a row's context menu, or another window.
+    func setExclusions(_ new: [Exclusion]) {
+        guard new != exclusions else { return }
+        exclusions = new
+        rebuildExclusions()
+        resize(grow: true)
+    }
+
+    /// Shows or hides the editor, and says what is hidden when it is closed --
+    /// a bare disclosure triangle over nothing tells you only that something
+    /// is missing.
+    private func applyRulesOpen() {
+        rulesStack.isHidden = !rulesOpen
+        rulesHelp.isHidden = !rulesOpen
+        addRuleButton.isHidden = !rulesOpen
+        let rules = self.rules
+        let on = rules.filter { $0.enabled }.count
+        let inactive = rules.filter { $0.inactiveReason(cap) != nil }.count
+        var note = rulesOpen ? "" : "\(on) of \(rules.count) switched on"
+        if !rulesOpen && inactive > 0 { note += ", \(inactive) inactive" }
+        rulesNote.stringValue = note
+        rulesNote.textColor = inactive > 0 && !rulesOpen ? .systemOrange : .secondaryLabelColor
+    }
+
+    @objc private func toggleRulesOpen() {
+        rulesOpen = rulesToggle.state == .on
+        applyRulesOpen()
+        resize(grow: false)
+        onRulesOpenChanged?(rulesOpen)
     }
 
     private func spacer(_ w: CGFloat) -> NSView {
@@ -443,6 +592,12 @@ final class ProcessWindow: NSWindowController, NSWindowDelegate, NSMenuDelegate,
     }
 
     @objc private func addRule() {
+        if !rulesOpen {
+            rulesOpen = true
+            rulesToggle.state = .on
+            applyRulesOpen()
+            onRulesOpenChanged?(true)
+        }
         commitRules(rules + [WatchRule(name: "New rule", minCPU: 200, sustain: 60)])
         rebuildRules()
         resize(grow: true)
@@ -472,18 +627,22 @@ final class ProcessWindow: NSWindowController, NSWindowDelegate, NSMenuDelegate,
             if !raw.isEmpty && (num == nil || num! < 0) {
                 fail("\u{201C}\(raw)\u{201D} is not a number.")
                 switch parts[1] {
-                case "cpu": f.stringValue = r.minCPU.map(fmtNum) ?? ""
-                case "mem": f.stringValue = r.minMemoryMB.map(fmtNum) ?? ""
-                case "age": f.stringValue = r.minAgeHours.map(fmtNum) ?? ""
-                default:    f.stringValue = r.sustain > 0 ? fmtNum(r.sustain / 60) : ""
+                case "cpu":   f.stringValue = r.minCPU.map(fmtNum) ?? ""
+                case "mem":   f.stringValue = r.minMemoryMB.map(fmtNum) ?? ""
+                case "age":   f.stringValue = r.minAgeHours.map(fmtNum) ?? ""
+                case "write": f.stringValue = r.minWriteKBs.map(fmtNum) ?? ""
+                case "wake":  f.stringValue = r.minWakeups.map(fmtNum) ?? ""
+                default:      f.stringValue = r.sustain > 0 ? fmtNum(r.sustain / 60) : ""
                 }
                 return
             }
             switch parts[1] {
-            case "cpu": r.minCPU = num
-            case "mem": r.minMemoryMB = num
-            case "age": r.minAgeHours = num
-            case "for": r.sustain = (num ?? 0) * 60
+            case "cpu":   r.minCPU = num
+            case "mem":   r.minMemoryMB = num
+            case "age":   r.minAgeHours = num
+            case "write": r.minWriteKBs = num
+            case "wake":  r.minWakeups = num
+            case "for":   r.sustain = (num ?? 0) * 60
             default: return
             }
         }
@@ -495,14 +654,34 @@ final class ProcessWindow: NSWindowController, NSWindowDelegate, NSMenuDelegate,
 
     // MARK: - table
 
-    private func buildTable() {
-        // Fixed widths for the numbers; the name takes whatever is left. The
-        // sum has to come in under the table, or the last column is clipped
-        // rather than the first one narrowed.
-        let cols: [(String, String, CGFloat)] = [
-            ("name", "Process", 268), ("pid", "PID", 54), ("cpu", "CPU", 58),
-            ("mem", "Memory", 72), ("age", "Running", 74), ("rule", "Rule", 112), ("kill", "", 74),
-        ]
+    /// Fixed widths for the numbers; the name takes whatever is left. The sum
+    /// has to come in under the table, or the last column is clipped rather
+    /// than the first one narrowed.
+    private static let liveColumns: [(String, String, CGFloat)] = [
+        ("name", "Process", 300), ("pid", "PID", 54), ("cpu", "CPU", 58),
+        ("mem", "Memory", 72), ("write", "Write", 74), ("age", "Running", 74),
+        ("rule", "Rule", 112), ("kill", "", 74),
+    ]
+
+    /// A different set, not the same one relabelled: an entry in the history
+    /// has a beginning, an end and a worst reading, and none of those is a
+    /// current figure.
+    /// These have to sum to less than the table, or the last column is clipped
+    /// rather than the first one narrowed -- which is how Outcome first came
+    /// out reading "Outcor".
+    private static let historyColumns: [(String, String, CGFloat)] = [
+        ("name", "Process", 254), ("rule", "Flagged by", 116), ("began", "Began", 108),
+        ("held", "Lasted", 76), ("peakcpu", "Peak CPU", 76), ("peakmem", "Peak memory", 92),
+        ("outcome", "Outcome", 100),
+    ]
+
+    /// The widths alone, for the check that they fit.
+    static var liveColumnWidths: [CGFloat] { liveColumns.map { $0.2 } }
+    static var historyColumnWidths: [CGFloat] { historyColumns.map { $0.2 } }
+    static var tableWidth: CGFloat { INNER }
+
+    private func installColumns(_ cols: [(String, String, CGFloat)]) {
+        for c in table.tableColumns { table.removeTableColumn(c) }
         for (id, title, w) in cols {
             let c = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(id))
             c.title = title
@@ -517,6 +696,10 @@ final class ProcessWindow: NSWindowController, NSWindowDelegate, NSMenuDelegate,
             }
             table.addTableColumn(c)
         }
+    }
+
+    private func buildTable() {
+        installColumns(Self.liveColumns)
         table.columnAutoresizingStyle = .firstColumnOnlyAutoresizingStyle
         table.dataSource = self
         table.delegate = self
@@ -532,7 +715,9 @@ final class ProcessWindow: NSWindowController, NSWindowDelegate, NSMenuDelegate,
         table.menu = context
     }
 
-    func numberOfRows(in tableView: NSTableView) -> Int { rows.count }
+    func numberOfRows(in tableView: NSTableView) -> Int {
+        mode2 == .history ? past.count : rows.count
+    }
 
     private final class NameCell: NSTableCellView {
         let title = NSTextField(labelWithString: "")
@@ -639,7 +824,12 @@ final class ProcessWindow: NSWindowController, NSWindowDelegate, NSMenuDelegate,
     }
 
     func tableView(_ tv: NSTableView, viewFor col: NSTableColumn?, row: Int) -> NSView? {
-        guard let col, row < rows.count else { return nil }
+        guard let col else { return nil }
+        if mode2 == .history {
+            guard row < past.count else { return nil }
+            return historyCell(tv, col, past[row])
+        }
+        guard row < rows.count else { return nil }
         let r = rows[row], p = r.proc
         switch col.identifier.rawValue {
         case "name":
@@ -672,6 +862,16 @@ final class ProcessWindow: NSWindowController, NSWindowDelegate, NSMenuDelegate,
             c.textField?.stringValue = p.isZombie ? "\u{2013}" : fmtBytes(p.memory)
             c.textField?.textColor = p.isZombie ? .tertiaryLabelColor : .labelColor
             return c
+        case "write":
+            let c = textCell(tv, col, mono: true, align: .right)
+            // Quiet at nothing: almost every process writes nothing most of the
+            // time, and a column of zeroes would bury the one that does not.
+            c.textField?.stringValue = p.isZombie ? "\u{2013}"
+                : (p.writeRate < 512 ? "\u{2013}" : fmtRate(p.writeRate))
+            c.textField?.textColor = p.writeRate > 1_048_576 ? .systemOrange : .secondaryLabelColor
+            c.toolTip = p.isZombie ? nil
+                : "read \(fmtRate(p.readRate))   \u{00B7}   wake-ups \(fmtWakeups(p.wakeupRate))"
+            return c
         case "age":
             let c = textCell(tv, col, mono: true, align: .right)
             c.textField?.stringValue = fmtAge(p.age)
@@ -701,6 +901,80 @@ final class ProcessWindow: NSWindowController, NSWindowDelegate, NSMenuDelegate,
             let target = killTarget(p, parent: parent(of: p))
             styleKillButton(c.button, for: p, target: target,
                             termSentAt: termSent[target?.pid ?? p.pid], grace: grace)
+            return c
+        default:
+            return nil
+        }
+    }
+
+    /// One past flag. Nothing here is a current reading, so nothing here gets
+    /// a live colour except the peak, which is a reading of a moment that has
+    /// gone and is coloured as it was.
+    private func historyCell(_ tv: NSTableView, _ col: NSTableColumn,
+                             _ e: FlagEvent) -> NSView? {
+        switch col.identifier.rawValue {
+        case "name":
+            let c = (tv.makeView(withIdentifier: col.identifier, owner: nil) as? NameCell)
+                ?? { let n = NameCell(); n.identifier = col.identifier; return n }()
+            c.title.stringValue = e.name
+            var bits: [String] = ["pid \(e.pid)"]
+            if e.wasZombie { bits.append("zombie") }
+            if !e.appPath.isEmpty {
+                bits.append((e.appPath as NSString).abbreviatingWithTildeInPath)
+            }
+            c.detail.stringValue = bits.joined(separator: "  \u{00B7}  ")
+            c.detail.textColor = e.wasZombie ? .systemRed : .secondaryLabelColor
+            c.toolTip = "\(e.rule): \(e.summary)\n"
+                + "began \(fmtWhen(e.began.timeIntervalSince1970))\n"
+                + (e.ended == nil ? "still flagged"
+                   : "ended \(fmtWhen(e.ended!.timeIntervalSince1970))")
+            return c
+        case "rule":
+            let c = textCell(tv, col, mono: false, align: .left)
+            c.textField?.stringValue = e.rule
+            c.textField?.textColor = .secondaryLabelColor
+            c.toolTip = e.summary
+            return c
+        case "began":
+            let c = textCell(tv, col, mono: true, align: .left)
+            c.textField?.stringValue = fmtAgo(e.began)
+            c.textField?.textColor = .labelColor
+            c.toolTip = fmtWhen(e.began.timeIntervalSince1970)
+            return c
+        case "held":
+            let c = textCell(tv, col, mono: true, align: .right)
+            c.textField?.stringValue = fmtAge(e.duration())
+            c.textField?.textColor = .labelColor
+            return c
+        case "peakcpu":
+            let c = textCell(tv, col, mono: true, align: .right)
+            c.textField?.stringValue = e.wasZombie ? "\u{2013}" : fmtCPU(e.peakCPU)
+            c.textField?.textColor = e.wasZombie ? .tertiaryLabelColor : loadColor(e.peakCPU)
+            return c
+        case "peakmem":
+            let c = textCell(tv, col, mono: true, align: .right)
+            c.textField?.stringValue = e.wasZombie ? "\u{2013}" : fmtBytes(e.peakMemory)
+            c.textField?.textColor = e.wasZombie ? .tertiaryLabelColor : .labelColor
+            c.toolTip = e.peakWriteRate < 512 ? nil
+                : "peak write \(fmtRate(e.peakWriteRate))"
+            return c
+        case "outcome":
+            let c = textCell(tv, col, mono: false, align: .left)
+            // Three different things, and the difference is the whole value of
+            // keeping the entry: it stopped, or you stopped it, or it has not.
+            if e.ended == nil {
+                c.textField?.stringValue = "still"
+                c.textField?.textColor = .systemRed
+                c.toolTip = "Still flagged right now."
+            } else if e.signalled {
+                c.textField?.stringValue = "ended by you"
+                c.textField?.textColor = .secondaryLabelColor
+                c.toolTip = "A signal went out from Reaper while this was listed."
+            } else {
+                c.textField?.stringValue = "went away"
+                c.textField?.textColor = .secondaryLabelColor
+                c.toolTip = "It stopped matching the rule, or it exited, on its own."
+            }
             return c
         default:
             return nil
@@ -743,7 +1017,9 @@ final class ProcessWindow: NSWindowController, NSWindowDelegate, NSMenuDelegate,
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
         let row = table.clickedRow
-        guard row >= 0, row < rows.count else { return }
+        // The history's rows are things that already happened; there is nothing
+        // to signal and nothing to look at live.
+        guard mode2 != .history, row >= 0, row < rows.count else { return }
         let p = rows[row].proc
         func item(_ title: String, _ sel: Selector, enabled: Bool = true) {
             let mi = NSMenuItem(title: title, action: sel, keyEquivalent: "")
@@ -765,6 +1041,14 @@ final class ProcessWindow: NSWindowController, NSWindowDelegate, NSMenuDelegate,
                  enabled: killability(of: pp) == .yes)
         }
         menu.addItem(.separator())
+        // The escape hatch. Without it the only way to stop a rule flagging a
+        // legitimate long job is to switch the rule off, which loses the
+        // detection instead of narrowing it.
+        let already = exclusions.contains { $0.appPath == p.appPath }
+        item(already ? "Already never flagged: \(p.appName)" : "Never Flag \(p.appName)",
+             #selector(ctxExclude(_:)), enabled: !already && !p.appPath.isEmpty)
+
+        menu.addItem(.separator())
         item("Copy Command Line", #selector(ctxCopy(_:)))
         item("Show in Finder", #selector(ctxReveal(_:)), enabled: !p.path.isEmpty)
     }
@@ -778,6 +1062,17 @@ final class ProcessWindow: NSWindowController, NSWindowDelegate, NSMenuDelegate,
     @objc private func ctxParent(_ s: NSMenuItem) {
         if let p = clicked(s), let pp = parent(of: p) { send(pp, SIGTERM) }
     }
+    @objc private func ctxExclude(_ s: NSMenuItem) {
+        guard let p = clicked(s), let x = Exclusion(p),
+              !exclusions.contains(where: { $0.appPath == x.appPath }) else { return }
+        exclusions.append(x)
+        rebuildExclusions()
+        resize(grow: true)
+        onExclusionsChanged?(exclusions)
+        onRefresh?()
+        say("\(x.name) will not be flagged again. Remove it from Never flagged above to undo.")
+    }
+
     @objc private func ctxCopy(_ s: NSMenuItem) {
         guard let p = clicked(s) else { return }
         let args = procArgs(p.pid)
@@ -800,10 +1095,11 @@ final class ProcessWindow: NSWindowController, NSWindowDelegate, NSMenuDelegate,
     /// Pushed by the app on its tick. The rows are rebuilt from scratch: they
     /// are cheap, and diffing them would be more code than the table.
     func update(load: SystemLoad?, procs: [ProcSample], verdict: ProcTracker.Verdict,
-                capability: WatchCapability, termSent: [pid_t: Date]) {
+                capability: WatchCapability, history: [FlagEvent], termSent: [pid_t: Date]) {
         self.procs = procs
         self.flags = verdict.flagged
         self.holding = verdict.holding
+        self.past = history
         self.termSent = termSent
         if let load { headline.stringValue = Self.headlineText(load) }
         // A capability that has changed puts a reason on -- or takes one off --
@@ -828,11 +1124,12 @@ final class ProcessWindow: NSWindowController, NSWindowDelegate, NSMenuDelegate,
     private func rebuildRows() {
         var byPid: [pid_t: ProcTracker.Flag] = [:]
         for f in holding + flags { byPid[f.proc.pid] = f }
-        if showAll {
+        switch mode2 {
+        case .all:
             rows = procs.sorted { $0.cpu > $1.cpu }.prefix(120)
                         .map { Row(proc: $0, flag: byPid[$0.pid]) }
             listTitle.stringValue = "All \(procs.count) of your processes, busiest first"
-        } else {
+        case .flagged:
             // What is flagged, then what is counting towards being flagged: the
             // second list is why the mark is amber, so hiding it would leave the
             // window unable to explain the icon.
@@ -845,14 +1142,39 @@ final class ProcessWindow: NSWindowController, NSWindowDelegate, NSMenuDelegate,
             } else {
                 listTitle.stringValue = "Flagged: \(flags.count) \u{00B7} counting: \(holding.count)"
             }
+        case .history:
+            listTitle.stringValue = past.isEmpty
+                ? "History: nothing flagged yet"
+                : "History: \(past.count) flag\(past.count == 1 ? "" : "s"), newest first"
         }
         table.reloadData()
     }
 
     @objc private func modeChanged() {
-        showAll = mode.selectedSegment == 1
-        onShowAllChanged?(showAll)
+        let want = Mode(rawValue: mode.selectedSegment) ?? .flagged
+        guard want != mode2 else { return }
+        let wasHistory = mode2 == .history
+        mode2 = want
+        // The columns are the mode's, so they are swapped rather than
+        // relabelled -- a header that describes the wrong thing is worse than a
+        // moment's flicker.
+        if wasHistory != (mode2 == .history) {
+            installColumns(mode2 == .history ? Self.historyColumns : Self.liveColumns)
+        }
+        clearHistory.isHidden = mode2 != .history
+        // Only the live modes are worth remembering: reopening the window on
+        // the history would hide what is wrong now, which is its first job.
+        if mode2 != .history { onShowAllChanged?(mode2 == .all) }
         rebuildRows()
+    }
+
+    @objc private func clearHistoryClicked() {
+        guard !past.isEmpty else { return }
+        let n = past.count
+        past = []
+        onClearHistory?()
+        rebuildRows()
+        say("Forgot \(n) entr\(n == 1 ? "y" : "ies").")
     }
 
     // MARK: - notes

@@ -45,7 +45,16 @@ func diagnosticsText(_ d: UserDefaults = .standard, settle: TimeInterval = 2) ->
     field("active:", "\(active?.name ?? "?")  -- \(active?.detail ?? "")")
     field("poll:", "\(Int(settings.poll)) s")
     field("inspect apps:", "\(settings.inspectApps)")
+    field("notify:", "\(settings.notify)")
+    field("paused:", settings.paused()
+          ? "until \(fmtWhen((settings.pausedUntil ?? Date()).timeIntervalSince1970))"
+          : "no")
     field("login item:", "\(LoginItem.enabled)")
+    // Which apps are never flagged, because "it is not flagging X" is
+    // otherwise indistinguishable from a bug.
+    let exclusions = Store.loadExclusions(d)
+    field("never flagged:", exclusions.isEmpty
+          ? "none" : exclusions.map { $0.name }.joined(separator: ", "))
     line()
 
     let tracker = ProcTracker()
@@ -81,6 +90,17 @@ func diagnosticsText(_ d: UserDefaults = .standard, settle: TimeInterval = 2) ->
     for h in verdict.holding {
         line("  \(h.proc.name) (\(h.proc.pid))  \(fmtCPU(h.proc.cpu))"
              + "  towards \(h.rule.name)  \(Int(h.progress * 100))% of \(fmtAge(h.rule.sustain))")
+    }
+    line()
+
+    // The last few things that were flagged, which is the part of a report
+    // that says whether this has happened before.
+    let log = Store.loadHistory(d)
+    line("history: \(log.events.count) entr\(log.events.count == 1 ? "y" : "ies")")
+    for e in log.events.prefix(8) {
+        line("  \(fmtAgo(e.began))  \(e.name) (\(e.pid))  by \(e.rule)"
+             + "  for \(fmtAge(e.duration()))  peak \(fmtCPU(e.peakCPU))"
+             + (e.signalled ? "  [ended by you]" : ""))
     }
     line()
     line("the mark would be: \(markDescription(verdict))")

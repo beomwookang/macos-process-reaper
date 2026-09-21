@@ -140,6 +140,15 @@ func fmtRate(_ bytesPerSec: Double) -> String {
 /// Wake-ups per second.
 func fmtWakeups(_ perSec: Double) -> String { String(format: "%.0f/s", perSec) }
 
+/// How long ago, for a list of things that have already happened. "3 h 12 m
+/// ago" answers "was that this morning" where a timestamp makes you work it out.
+func fmtAgo(_ d: Date, now: Date = Date()) -> String {
+    let s = now.timeIntervalSince(d)
+    if s < 0 { return "just now" }
+    if s < 45 { return "just now" }
+    return "\(fmtAge(s)) ago"
+}
+
 /// A wall-clock instant, for the one place that shows when a process started
 /// rather than how long ago that was.
 func fmtWhen(_ epoch: TimeInterval) -> String {
