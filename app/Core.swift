@@ -15,6 +15,12 @@ let BUNDLE_ID   = "com.local.reaper"
 let AGENT_LABEL = "com.local.reaper"
 let REPO_URL    = "https://github.com/beomwookang/macos-process-reaper"
 
+/// The Accessibility pane, opened directly. macOS shows its own permission
+/// prompt only the first time an app asks and then stops, so a link to the
+/// pane is the only reliable way back to it.
+let ACCESSIBILITY_PANE =
+    "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
+
 /// Read from the bundle rather than written here, so Info.plist stays the one
 /// place a version number lives. "?" when running the executable outside the
 /// bundle, which is how the test binary sees it.

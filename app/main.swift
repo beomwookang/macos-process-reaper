@@ -61,6 +61,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     private let profileMenu = NSMenu()
     private let profileItem = NSMenuItem(title: "Profile", action: nil, keyEquivalent: "")
     private let inspectItem = NSMenuItem(title: "", action: #selector(toggleInspect), keyEquivalent: "")
+    /// Shown only while the inspection is switched on and still cannot see.
+    /// The toggle stays a toggle -- making it re-ask instead of switching off
+    /// would leave no way to switch it off at all -- so the second chance is
+    /// its own item, which is also the only way to reach the settings pane
+    /// after macOS has stopped showing its one-time prompt.
+    private let grantItem = NSMenuItem(title: "Grant Accessibility\u{2026}",
+                                       action: #selector(grantAccessibility), keyEquivalent: "")
     private let pollMenu = NSMenu()
     private let loginItem = NSMenuItem(title: "Start at Login", action: #selector(toggleLogin),
                                        keyEquivalent: "")
@@ -119,6 +126,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         inspectItem.target = self
         inspectItem.title = "Inspect Apps for Windows & Hangs"
         m.addItem(inspectItem)
+
+        grantItem.target = self
+        grantItem.isHidden = true
+        grantItem.toolTip = "Opens the Accessibility pane, and says what to expect after a rebuild."
+        m.addItem(grantItem)
 
         for s in WatchSettings.pollChoices {
             let mi = NSMenuItem(title: s >= 60 ? "\(Int(s / 60)) min" : "\(Int(s)) s",
@@ -257,6 +269,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         inspectItem.toolTip = cap.appsInspected
             ? "Asking each app about its windows and whether it is answering."
             : "Needs Accessibility. " + (cap.reason.isEmpty ? "" : cap.reason + ".")
+        // Switched on, and still not seeing: the permission is the only thing
+        // that can be missing, so offer the way to it rather than leaving a
+        // checked box that does nothing.
+        grantItem.isHidden = !(settings.inspectApps && !cap.appsInspected)
         loginItem.state = LoginItem.enabled ? .on : .off
         for mi in pollMenu.items {
             mi.state = (mi.representedObject as? TimeInterval) == settings.poll ? .on : .off
@@ -410,25 +426,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     // MARK: - settings
 
-    /// The one permission this app can want, and it is only ever asked for
-    /// here -- when someone turns on the thing that needs it.
+    /// The one permission this app can want. Turning the switch on asks for it;
+    /// the switch itself stays a plain toggle either way.
     @objc private func toggleInspect() {
         let want = !settings.inspectApps
-        if want && !AXIsProcessTrusted() {
-            let key = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String
-            _ = AXIsProcessTrustedWithOptions([key: true] as CFDictionary)
-            alert("Reaper needs Accessibility for this",
-                  "Two of the four states -- whether an app has windows, and whether it is "
-                  + "answering -- can only be read through the accessibility API, so macOS asks "
-                  + "before letting an app read them.\n\n"
-                  + "Add Reaper under Privacy & Security \u{2192} Accessibility. Rules that need "
-                  + "it will say they are inactive until you do.\n\n"
-                  + "The app is ad-hoc signed, so rebuilding it changes its signature and macOS "
-                  + "may drop the permission again.")
-        }
         settings.inspectApps = want
         Store.saveSettings(settings)
+        if want && !AXIsProcessTrusted() { askForAccessibility() }
         refresh()
+    }
+
+    @objc private func grantAccessibility() { askForAccessibility() }
+
+    /// Prompts, opens the pane, and says what to expect.
+    ///
+    /// Both, not either: macOS shows its own prompt only the first time an app
+    /// asks, and every subsequent call returns false in silence -- so after a
+    /// rebuild has dropped the grant, the prompt alone would do nothing at all.
+    private func askForAccessibility() {
+        let key = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String
+        _ = AXIsProcessTrustedWithOptions([key: true] as CFDictionary)
+        NSApp.activate(ignoringOtherApps: true)
+        let a = NSAlert()
+        a.messageText = "Reaper needs Accessibility to see windows and hangs"
+        a.informativeText =
+            "Whether an app has windows, and whether it is answering, can only be read through "
+            + "the accessibility API, so macOS asks before letting an app read them. The other "
+            + "conditions -- CPU, memory, uptime, zombie, orphan -- need nothing and keep "
+            + "working.\n\n"
+            + "Turn on Reaper under Privacy & Security \u{2192} Accessibility. Until then, rules "
+            + "using those two states say they are inactive rather than quietly flagging "
+            + "nothing.\n\n"
+            + "Grant it to the copy you keep, in /Applications. This bundle is ad-hoc signed, so "
+            + "rebuilding it changes its signature and macOS drops the grant \u{2014} you may have "
+            + "to remove Reaper from that list and add it again."
+        a.addButton(withTitle: "Open Accessibility Settings")
+        a.addButton(withTitle: "Later")
+        if a.runModal() == .alertFirstButtonReturn, let url = URL(string: ACCESSIBILITY_PANE) {
+            NSWorkspace.shared.open(url)
+        }
     }
 
     @objc private func setPoll(_ sender: NSMenuItem) {

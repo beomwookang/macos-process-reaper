@@ -35,6 +35,11 @@ func diagnosticsText(_ d: UserDefaults = .standard, settle: TimeInterval = 2) ->
 
     line("\(APP_NAME) \(appVersion)")
     field("defaults domain:", Bundle.main.bundleIdentifier ?? "none -- not running from the bundle")
+    // Which copy is running matters more than it looks: the bundle is ad-hoc
+    // signed, so an Accessibility grant belongs to one copy of it. A report
+    // from build/Reaper.app and one from /Applications/Reaper.app can disagree
+    // about the two states that need the permission.
+    field("bundle:", Bundle.main.bundlePath)
     field("macOS:", ProcessInfo.processInfo.operatingSystemVersionString)
     field("profiles:", profiles.map { $0.name }.joined(separator: ", "))
     field("active:", "\(active?.name ?? "?")  -- \(active?.detail ?? "")")

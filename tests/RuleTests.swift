@@ -347,7 +347,7 @@ enum DiagnosticsTests {
         let text = diagnosticsText(d, settle: 0)
         let lines = text.split(separator: "\n", omittingEmptySubsequences: false).map(String.init)
 
-        for want in ["defaults domain:", "macOS:", "profiles:", "active:", "poll:",
+        for want in ["defaults domain:", "bundle:", "macOS:", "profiles:", "active:", "poll:",
                      "inspect apps:", "capability:", "sampled:", "zombies:", "orphans:",
                      "flagged:", "counting:", "the mark would be:"] {
             check(lines.contains { $0.contains(want) },
@@ -355,6 +355,10 @@ enum DiagnosticsTests {
         }
         check(text.hasPrefix("Reaper "), "diagnostics open with the app and its version",
               String(text.prefix(20)))
+        // Which copy is running decides whether the accessibility states can
+        // work at all, so a report has to carry it.
+        check(lines.contains { $0.contains("bundle:") && $0.contains("/") },
+              "diagnostics name the bundle they were taken from", "")
         check(lines.contains { $0.contains("rules of Balanced") },
               "diagnostics name the active profile's rules", "")
         // Every shipped rule has to appear, or a report would not say which
