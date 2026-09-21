@@ -301,7 +301,23 @@ say they are inactive rather than flagging nothing in silence.
 Two things to know about it:
 
 - The bundle is ad-hoc signed, so **rebuilding changes its signature and macOS
-  may drop the permission**. Re-grant it after `make`, or leave the switch off.
+  drops the permission**. Re-grant it after `make install`, or leave the switch
+  off.
+
+  Switching the checkbox off and on again does **not** re-grant it. macOS records
+  an approval against a code signing requirement that pins the binary's hash, and
+  toggling flips the answer while keeping the stale requirement — so the list
+  shows Reaper switched on while the app is told it has no permission. Observed
+  directly: the stored requirement pinned the hashes of two earlier builds and
+  `auth_value` was still 2. Remove Reaper from the list with the minus button and
+  add it again, or clear the entry outright:
+
+  ```sh
+  tccutil reset Accessibility com.local.reaper
+  ```
+
+  The app says this too, in the dialog behind **Grant Accessibility…**, which
+  appears in its menu whenever the switch is on and it still cannot see.
 - The window count from the accessibility list has not been verified end to end
   in this repo, because doing so needs the grant, which needs a person in System
   Settings. What *is* covered: the permission-denied path reports why rather
