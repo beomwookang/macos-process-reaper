@@ -76,6 +76,13 @@ open /Applications/Reaper.app
 A mark appears in the menu bar. There is nothing else to set up. To have it come
 back after a restart, use **Start at Login** in its menu.
 
+Turn that on from the copy you intend to keep. The login item records the path
+of the running bundle, so switching it on while running `build/Reaper.app`
+writes that path — and `make clean` then deletes it, leaving a login item that
+silently starts nothing. `make install` first, open `/Applications/Reaper.app`,
+and turn it on there. To repoint one that is already wrong, switch it off and
+back on from the installed copy.
+
 To see what it is doing without opening anything:
 
 ```sh
@@ -345,7 +352,7 @@ There is not much, which is the point.
 | Path | What it is |
 |---|---|
 | `/Applications/Reaper.app` | The app. Written by `make install`, removed by `make uninstall` |
-| `~/Library/LaunchAgents/com.local.reaper.plist` | The login item, written only if you turn it on. It runs `open -a Reaper` and nothing else |
+| `~/Library/LaunchAgents/com.local.reaper.plist` | The login item, written only if you turn it on. It runs `open -a <the bundle it was switched on from>` and nothing else |
 | `com.local.reaper` in your user defaults | Profiles, the active profile, poll interval, the Inspect Apps switch |
 
 No daemon, no LaunchDaemon, no `/etc/sudoers.d` entry, no helper binary, nothing
