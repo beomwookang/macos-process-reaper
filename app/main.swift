@@ -552,9 +552,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             + "Turn on Reaper under Privacy & Security \u{2192} Accessibility. Until then, rules "
             + "using those two states say they are inactive rather than quietly flagging "
             + "nothing.\n\n"
-            + "Grant it to the copy you keep, in /Applications. This bundle is ad-hoc signed, so "
-            + "rebuilding it changes its signature and macOS drops the grant \u{2014} you may have "
-            + "to remove Reaper from that list and add it again."
+            + "Grant it to the copy you keep, in /Applications.\n\n"
+            + "If Reaper is already in that list and switched on and you are still reading this, "
+            + "the entry is stale, and switching it off and on again will not fix it: that flips "
+            + "the answer while keeping the signature the answer was recorded against. This "
+            + "bundle is ad-hoc signed, so every rebuild changes that signature. Remove Reaper "
+            + "from the list with the minus button and add it again, or run:\n\n"
+            + "    tccutil reset Accessibility com.local.reaper"
         a.addButton(withTitle: "Open Accessibility Settings")
         a.addButton(withTitle: "Later")
         if a.runModal() == .alertFirstButtonReturn, let url = URL(string: ACCESSIBILITY_PANE) {
